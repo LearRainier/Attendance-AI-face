@@ -12,13 +12,37 @@ import logging
 import os
 import csv
 import json
-from datetime import datetime
+import hashlib
+import secrets
+import time
+from datetime import datetime, timezone, timedelta
+try:
+    from zoneinfo import ZoneInfo
+    PHT_TZ = ZoneInfo("Asia/Manila")
+except Exception:
+    PHT_TZ = timezone(timedelta(hours=8))
+from typing import Dict, Tuple, Optional
+
+import cv2
 
 from src.recognition import (
     find_match,
     get_embedding,
     build_match_index,
     find_embedding_match_indexed,
+)
+from src.db import (
+    init_db,
+    load_user_profiles as db_load_user_profiles,
+    save_user_profile as db_save_user_profile,
+    delete_user_profile as db_delete_user_profile,
+    verify_user_credentials as db_verify_user_credentials,
+    set_user_password as db_set_user_password,
+    log_attendance_db,
+    has_logged_in_today_db,
+    find_todays_event_db,
+    get_all_attendance_records,
+    wipe_db,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,23 +53,27 @@ logger = logging.getLogger(__name__)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REGISTERED_FACES_DIR = os.path.join(BASE_DIR, "data", "registered_faces")
 UNKNOWN_LOGS_DIR = os.path.join(BASE_DIR, "data", "unknown_logs")
+SPOOF_LOGS_DIR = os.path.join(BASE_DIR, "data", "spoof_logs")
 ATTENDANCE_CSV = os.path.join(BASE_DIR, "data", "attendance.csv")
 USERS_JSON = os.path.join(BASE_DIR, "data", "users.json")
 SETTINGS_JSON = os.path.join(BASE_DIR, "data", "settings.json")
 
 # Deduplication: don't log the same track_id again within this cooldown (seconds).
-# Each new track ID (assigned when a face re-enters the frame) is treated as a
-# fresh visit, so leaving and returning will always create a new log entry.
 DEDUP_TRACK_COOLDOWN_SECONDS = 10
 
-# Also dedup per person name: brief tracking dropouts (head turn, occlusion)
-# spawn a new track_id for the same person, which would otherwise log a
-# duplicate row seconds after the first one.
-DEDUP_NAME_COOLDOWN_SECONDS = 60
+# Single daily check-in mode: resets at 12:00 AM Philippine Standard Time (UTC+8).
+# In production mode (dev_mode=False), each student can only log IN once per calendar day.
+DEV_MODE_DEFAULT = False
+DEV_LOGIN_COOLDOWN_SECONDS = 60
 
 # In-memory caches of last successful log times
 _logged_tracks = {}  # {track_id: datetime}
 _logged_names = {}   # {name: datetime}
+
+
+def get_pht_now() -> datetime:
+    """Return the current datetime in Philippine Standard Time (PST/PHT: UTC+8)."""
+    return datetime.now(PHT_TZ)
 
 
 def sanitize_name(person_name):
@@ -220,98 +248,233 @@ def save_settings(updates):
     return settings
 
 
-PROFILE_FIELDS = ("email", "phone", "department", "position", "employee_id", "notes")
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_PASSWORD = "admin123"
+
+_ACTIVE_ADMIN_TOKENS: Dict[str, Tuple[str, float]] = {}
+TOKEN_LIFETIME_SECONDS = 86400 * 7  # 7 days
+
+
+def _hash_password(password: str, salt: str) -> str:
+    return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
+
+
+def get_admin_credentials() -> Tuple[str, str, str]:
+    """Returns (username, password_hash, salt). Initializes defaults in settings.json if not set."""
+    settings = load_settings()
+    username = settings.get("admin_username")
+    pwd_hash = settings.get("admin_password_hash")
+    salt = settings.get("admin_salt")
+
+    if not username or not pwd_hash or not salt:
+        salt = secrets.token_hex(16)
+        pwd_hash = _hash_password(DEFAULT_ADMIN_PASSWORD, salt)
+        username = DEFAULT_ADMIN_USERNAME
+        save_settings({
+            "admin_username": username,
+            "admin_password_hash": pwd_hash,
+            "admin_salt": salt,
+        })
+    return username, pwd_hash, salt
+
+
+def verify_admin_credentials(username: str, password: str) -> bool:
+    cur_user, cur_hash, salt = get_admin_credentials()
+    if username.strip() != cur_user:
+        return False
+    return _hash_password(password, salt) == cur_hash
+
+
+def update_admin_credentials(new_username: Optional[str], new_password: Optional[str]) -> bool:
+    cur_user, _, _ = get_admin_credentials()
+    salt = secrets.token_hex(16)
+    updates = {}
+    if new_username and new_username.strip():
+        updates["admin_username"] = new_username.strip()
+    else:
+        updates["admin_username"] = cur_user
+
+    if new_password and new_password.strip():
+        updates["admin_password_hash"] = _hash_password(new_password.strip(), salt)
+        updates["admin_salt"] = salt
+
+    save_settings(updates)
+    return True
+
+
+_ACTIVE_ADMIN_TOKENS = {}  # {token: (username, expiry)}
+_ACTIVE_USER_TOKENS = {}   # {token: {"username": str, "role": str, "expiry": float, "user_info": dict}}
+
+
+def create_admin_token(username: str) -> str:
+    token = secrets.token_urlsafe(32)
+    _ACTIVE_ADMIN_TOKENS[token] = (username, time.time() + TOKEN_LIFETIME_SECONDS)
+    return token
+
+
+def verify_admin_token(token: str) -> Optional[str]:
+    if not token:
+        return None
+    entry = _ACTIVE_ADMIN_TOKENS.get(token)
+    if not entry:
+        return None
+    username, expiry = entry
+    if time.time() > expiry:
+        _ACTIVE_ADMIN_TOKENS.pop(token, None)
+        return None
+    return username
+
+
+def revoke_admin_token(token: str):
+    _ACTIVE_ADMIN_TOKENS.pop(token, None)
+    _ACTIVE_USER_TOKENS.pop(token, None)
+
+
+def create_user_token(username: str, role: str = "student", user_info: Optional[dict] = None) -> str:
+    token = secrets.token_urlsafe(32)
+    _ACTIVE_USER_TOKENS[token] = {
+        "username": username,
+        "role": role,
+        "expiry": time.time() + TOKEN_LIFETIME_SECONDS,
+        "user_info": user_info or {},
+    }
+    return token
+
+
+def verify_user_token(token: str) -> Optional[dict]:
+    if not token:
+        return None
+    session = _ACTIVE_USER_TOKENS.get(token)
+    if not session:
+        return None
+    if time.time() > session["expiry"]:
+        _ACTIVE_USER_TOKENS.pop(token, None)
+        return None
+    return session
+
+
+def verify_any_token(token: str) -> Optional[dict]:
+    """Verify either an admin token or a user session token."""
+    if not token:
+        return None
+    # 1. Check user/student session tokens
+    user_session = verify_user_token(token)
+    if user_session:
+        return user_session
+    # 2. Check admin tokens
+    admin_user = verify_admin_token(token)
+    if admin_user:
+        return {"username": admin_user, "role": "admin", "user_info": {"name": admin_user}}
+    return None
+
+
+def verify_user_credentials(identifier: str, password: str) -> Optional[dict]:
+    """Verify student/user credentials against SQLite database."""
+    return db_verify_user_credentials(identifier, password)
+
+
+def set_user_password(name: str, new_password: str) -> bool:
+    """Update a user's password in SQLite, storing salt and SHA-256 hash."""
+    return db_set_user_password(name, new_password)
+
+
+PROFILE_FIELDS = (
+    "email", "phone", "department", "position", "employee_id", "student_number", "notes",
+    "temp_password", "password_hash", "salt", "account_id", "role", "credentials_sent", "credentials_sent_at",
+)
 
 
 def load_user_profiles():
-    """Load ``data/users.json`` — personal-detail records keyed by sanitized
-    name. Returns an empty dict if the file doesn't exist yet or is corrupt."""
-    if not os.path.isfile(USERS_JSON):
-        return {}
-    try:
-        with open(USERS_JSON, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception as e:
-        logger.warning("Error loading %s: %s", USERS_JSON, e)
-        return {}
+    """Load user profiles from SQLite database."""
+    return db_load_user_profiles()
 
 
 def save_user_profile(name, fields):
-    """Create or update the personal-detail record for ``name``. Unknown
-    keys in ``fields`` are ignored; missing ones keep their previous value.
-
-    Returns the saved profile dict.
-    """
-    clean_name = sanitize_name(name)
-    if not clean_name:
-        raise ValueError("Name cannot be empty (or contained only invalid characters).")
-
-    profiles = load_user_profiles()
-    profile = dict(profiles.get(clean_name, {}))
-    for key in PROFILE_FIELDS:
-        if key in fields:
-            profile[key] = fields[key]
-    profile["name"] = clean_name
-    profile["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    profiles[clean_name] = profile
-
-    os.makedirs(os.path.dirname(USERS_JSON), exist_ok=True)
-    with open(USERS_JSON, "w", encoding="utf-8") as f:
-        json.dump(profiles, f, indent=2)
-
-    return profile
+    """Create or update user profile in SQLite database."""
+    return db_save_user_profile(name, fields)
 
 
 def ensure_user_profile_stub(name):
-    """Create an empty personal-detail record for ``name`` if none exists yet.
-
-    Called after every face registration (and at reload, for anyone already
-    sitting in ``registered_faces/`` without one) so a registered face and a
-    ``users.json`` record can't drift apart — before this, registering a face
-    from the Register page never touched ``users.json`` at all, so anyone
-    enrolled that way was invisible to anything that only read the profile
-    store, and looked "unsynced" on the Users page.
-
-    Deliberately leaves ``updated_at`` as ``None`` rather than stamping it:
-    that field means "someone filled in personal details," and a stub with
-    nothing but a name shouldn't count towards that.  No-op if a profile
-    already exists — never overwrites real data.
-    """
+    """Create an empty personal-detail record for name if none exists yet."""
     clean_name = sanitize_name(name)
     if not clean_name:
         return
+    profiles = db_load_user_profiles()
+    if clean_name not in profiles:
+        db_save_user_profile(clean_name, {"name": clean_name})
 
-    profiles = load_user_profiles()
-    if clean_name in profiles:
-        return
 
-    profiles[clean_name] = {
-        "name": clean_name,
-        "email": "",
-        "phone": "",
-        "department": "",
-        "position": "",
-        "employee_id": "",
-        "notes": "",
-        "updated_at": None,
-    }
-    os.makedirs(os.path.dirname(USERS_JSON), exist_ok=True)
-    with open(USERS_JSON, "w", encoding="utf-8") as f:
-        json.dump(profiles, f, indent=2)
+def delete_face_templates(name):
+    """Delete all registered face embeddings and directory for ``name``.
+    Returns True if templates were removed."""
+    clean_name = sanitize_name(name)
+    if not clean_name:
+        return False
+    person_dir = os.path.join(REGISTERED_FACES_DIR, clean_name)
+    if os.path.isdir(person_dir):
+        import shutil
+        shutil.rmtree(person_dir)
+        logger.info("Deleted face templates for '%s'", clean_name)
+        return True
+    return False
 
 
 def delete_user_profile(name):
-    """Remove the personal-detail record for ``name`` (does not touch their
-    face embeddings). Returns True if a record was actually removed."""
+    """Remove the personal-detail record from SQLite and face embeddings for ``name``.
+    Returns True if either a record or face templates were actually removed."""
     clean_name = sanitize_name(name)
-    profiles = load_user_profiles()
-    if clean_name not in profiles:
-        return False
-    del profiles[clean_name]
-    with open(USERS_JSON, "w", encoding="utf-8") as f:
-        json.dump(profiles, f, indent=2)
-    return True
+    removed_profile = db_delete_user_profile(clean_name)
+    removed_face = delete_face_templates(clean_name)
+    return removed_profile or removed_face
+
+
+def wipe_all_data():
+    """Wipe all collected data: attendance, registered faces, users, snapshots, outbox."""
+    import shutil
+    wipe_db()
+    # Reset attendance.csv if present
+    if os.path.exists(ATTENDANCE_CSV):
+        try:
+            with open(ATTENDANCE_CSV, "w", encoding="utf-8") as f:
+                f.write("Name,Timestamp,Type\n")
+        except Exception:
+            pass
+    # Reset users.json if present
+    if os.path.exists(USERS_JSON):
+        try:
+            with open(USERS_JSON, "w", encoding="utf-8") as f:
+                f.write("{}")
+        except Exception:
+            pass
+    # Clean registered_faces
+    if os.path.exists(REGISTERED_FACES_DIR):
+        shutil.rmtree(REGISTERED_FACES_DIR)
+    os.makedirs(REGISTERED_FACES_DIR, exist_ok=True)
+    # Clean spoof_logs
+    if os.path.exists(SPOOF_LOGS_DIR):
+        for fn in os.listdir(SPOOF_LOGS_DIR):
+            try:
+                os.remove(os.path.join(SPOOF_LOGS_DIR, fn))
+            except Exception:
+                pass
+    # Clean unknown_logs
+    if os.path.exists(UNKNOWN_LOGS_DIR):
+        for fn in os.listdir(UNKNOWN_LOGS_DIR):
+            try:
+                os.remove(os.path.join(UNKNOWN_LOGS_DIR, fn))
+            except Exception:
+                pass
+    # Clean outbox
+    outbox_dir = os.path.join(BASE_DIR, "data", "outbox")
+    if os.path.exists(outbox_dir):
+        for fn in os.listdir(outbox_dir):
+            try:
+                os.remove(os.path.join(outbox_dir, fn))
+            except Exception:
+                pass
+    _logged_tracks.clear()
+    _logged_names.clear()
+    logger.info("All collected attendance, face, and log data has been wiped clean.")
 
 
 def verify_face(frame, registered_faces):
@@ -433,135 +596,119 @@ def log_attendance(name, track_id=None, event_type="IN"):
     # Skip non-person labels
     skip_labels = {
         "Unknown", "No Registered Faces", "No Face Detected",
-        "Error", "Scanning...",
+        "Error", "Scanning...", "Liveness Failed", "Spoof Detected",
     }
     if name in skip_labels:
         return False
 
-    now = datetime.now()
+    now = get_pht_now()
 
     if event_type == "IN":
+        # Check settings for dev_mode (default False for single daily login)
+        settings = load_settings()
+        dev_mode = settings.get("dev_mode", DEV_MODE_DEFAULT)
+
+        if event_type == "IN":
+            today_str = now.strftime("%Y-%m-%d")
+            if has_logged_in_today_db(name, today_str):
+                logger.info("Skipping login for %s: already logged IN today (%s PHT).", name, today_str)
+                return False
+
         # ---------- Per-track deduplication ----------
         if track_id is not None and track_id in _logged_tracks:
             elapsed = (now - _logged_tracks[track_id]).total_seconds()
             if elapsed < DEDUP_TRACK_COOLDOWN_SECONDS:
-                return False  # already logged for this track appearance — skip
+                return False
 
-        # ---------- Per-name deduplication ----------
-        if name in _logged_names:
-            elapsed = (now - _logged_names[name]).total_seconds()
-            if elapsed < DEDUP_NAME_COOLDOWN_SECONDS:
-                return False  # same person logged moments ago (track flicker) — skip
-
-        # Prune expired entries so the caches don't grow forever in long sessions
+        # Prune expired entries
         for tid in [t for t, ts in _logged_tracks.items()
                     if (now - ts).total_seconds() >= DEDUP_TRACK_COOLDOWN_SECONDS]:
             del _logged_tracks[tid]
         for n in [n for n, ts in _logged_names.items()
-                  if (now - ts).total_seconds() >= DEDUP_NAME_COOLDOWN_SECONDS]:
+                  if (now - ts).total_seconds() >= DEV_LOGIN_COOLDOWN_SECONDS]:
             del _logged_names[n]
 
-    # ---------- Ensure CSV has a header ----------
-    write_header = False
-    if not os.path.isfile(ATTENDANCE_CSV) or os.path.getsize(ATTENDANCE_CSV) == 0:
-        write_header = True
+    ts_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
+    # 1. Log to SQLite database
+    log_attendance_db(name, event_type, ts_str)
+
+    # 2. Also append to CSV as a backup / export file
     try:
+        write_header = not os.path.isfile(ATTENDANCE_CSV) or os.path.getsize(ATTENDANCE_CSV) == 0
         with open(ATTENDANCE_CSV, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if write_header:
                 writer.writerow(["Name", "Timestamp", "Type"])
-            writer.writerow([name, now.strftime("%Y-%m-%d %H:%M:%S"), event_type])
+            writer.writerow([name, ts_str, event_type])
+    except Exception as e:
+        logger.warning("Could not append to CSV backup: %s", e)
 
-        if event_type == "IN":
-            if track_id is not None:
-                _logged_tracks[track_id] = now
-            _logged_names[name] = now
-        logger.info("Attendance logged: %s %s at %s", name, event_type, now.strftime("%H:%M:%S"))
-        return True
-
-    except OSError as e:
-        logger.error("Failed to write attendance: %s", e)
-        return False
+    if event_type == "IN":
+        if track_id is not None:
+            _logged_tracks[track_id] = now
+        _logged_names[name] = now
+    logger.info("Attendance logged to SQLite: %s %s at %s PHT", name, event_type, now.strftime("%H:%M:%S"))
+    return True
 
 
 def _find_todays_event(name, date_str, event_type):
-    """Scan attendance.csv for `name`'s first `event_type` row on `date_str`
-    (YYYY-MM-DD). Returns that row's full timestamp, or None."""
-    if not os.path.isfile(ATTENDANCE_CSV):
-        return None
-    with open(ATTENDANCE_CSV, newline="", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        next(reader, None)  # header row
-        for row in reader:
-            if len(row) < 2 or row[0] != name or not row[1].startswith(date_str):
-                continue
-            row_type = row[2] if len(row) >= 3 and row[2] in ("IN", "OUT") else "IN"
-            if row_type == event_type:
-                return row[1]
-    return None
+    """Find first event timestamp for `name` on `date_str` (YYYY-MM-DD) from SQLite."""
+    return find_todays_event_db(name, date_str, event_type)
+
+
+def has_logged_in_today(name: str) -> bool:
+    """Return True if `name` has already logged an 'IN' event today in Philippine Time."""
+    clean_name = sanitize_name(name)
+    if not clean_name:
+        return False
+
+    settings = load_settings()
+    if settings.get("dev_mode", DEV_MODE_DEFAULT):
+        if clean_name in _logged_names:
+            elapsed = (get_pht_now() - _logged_names[clean_name]).total_seconds()
+            return elapsed < DEV_LOGIN_COOLDOWN_SECONDS
+        return False
+
+    today_pht = get_pht_now().strftime("%Y-%m-%d")
+    return has_logged_in_today_db(clean_name, today_pht)
 
 
 def manual_time_event(name, event_type):
-    """
-    Manually log a time-in or time-out for `name`, bypassing the tracker
-    entirely — a fallback for when face recognition isn't practical
-    (camera trouble, someone forgot their badge photo, etc.).
-
-    Unlike ``log_attendance()`` (which dedups a *tracker-driven* IN on
-    short per-track/per-name cooldowns so tracking flicker doesn't spam
-    duplicate rows), a manual entry is a deliberate one-shot action, so the
-    constraint here is **at most one IN and one OUT per person per calendar
-    day** — checked against every existing row for that name today
-    regardless of whether it came from the camera or a prior manual entry.
-
-    Parameters
-    ----------
-    name : str
-        The person's name (sanitized the same way as face registration).
-    event_type : str
-        ``"IN"`` or ``"OUT"``.
-
-    Returns
-    -------
-    str
-        The logged timestamp (``"YYYY-MM-DD HH:MM:SS"``).
-
-    Raises
-    ------
-    ValueError
-        If the name is empty, `event_type` is invalid, the person already
-        has that event type logged today, or (for "OUT") they haven't
-        timed in yet today.
-    """
+    """Manually log time event to SQLite and CSV."""
     clean_name = sanitize_name(name)
     if not clean_name:
         raise ValueError("Name cannot be empty (or contained only invalid characters).")
     if event_type not in ("IN", "OUT"):
         raise ValueError("event_type must be 'IN' or 'OUT'.")
 
-    now = datetime.now()
+    now = get_pht_now()
     today = now.strftime("%Y-%m-%d")
 
-    existing = _find_todays_event(clean_name, today, event_type)
+    existing = find_todays_event_db(clean_name, today, event_type)
     if existing:
         verb = "timed in" if event_type == "IN" else "timed out"
         existing_time = datetime.strptime(existing, "%Y-%m-%d %H:%M:%S").strftime("%I:%M %p").lstrip("0")
         raise ValueError(f"{clean_name} already {verb} today at {existing_time}.")
 
-    if event_type == "OUT" and not _find_todays_event(clean_name, today, "IN"):
+    if event_type == "OUT" and not find_todays_event_db(clean_name, today, "IN"):
         raise ValueError(f"{clean_name} hasn't timed in today yet — can't time out.")
 
-    write_header = not os.path.isfile(ATTENDANCE_CSV) or os.path.getsize(ATTENDANCE_CSV) == 0
-    timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
-    with open(ATTENDANCE_CSV, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if write_header:
-            writer.writerow(["Name", "Timestamp", "Type"])
-        writer.writerow([clean_name, timestamp, event_type])
+    ts_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    log_attendance_db(clean_name, event_type, ts_str)
 
-    logger.info("Manual attendance logged: %s %s at %s", clean_name, event_type, now.strftime("%H:%M:%S"))
-    return timestamp
+    try:
+        write_header = not os.path.isfile(ATTENDANCE_CSV) or os.path.getsize(ATTENDANCE_CSV) == 0
+        with open(ATTENDANCE_CSV, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if write_header:
+                writer.writerow(["Name", "Timestamp", "Type"])
+            writer.writerow([clean_name, ts_str, event_type])
+    except Exception:
+        pass
+
+    logger.info("Manual attendance logged to SQLite: %s %s at %s PHT", clean_name, event_type, now.strftime("%H:%M:%S"))
+    return ts_str
 
 
 def save_unknown_snapshot(frame):
@@ -578,8 +725,6 @@ def save_unknown_snapshot(frame):
     str or None
         The saved file path, or None on failure.
     """
-    import cv2
-
     os.makedirs(UNKNOWN_LOGS_DIR, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"unknown_{timestamp}.jpg"
@@ -590,5 +735,23 @@ def save_unknown_snapshot(frame):
         logger.info("Unknown face saved: %s", filepath)
         return filepath
     except Exception as e:
-        logger.error("Failed to save unknown snapshot: %s", e)
+        logger.error("Failed to save unknown face: %s", e)
+        return None
+
+
+def save_spoof_snapshot(frame):
+    """
+    Save a timestamped snapshot of a failed liveness or spoof attempt to ``data/spoof_logs/``.
+    """
+    os.makedirs(SPOOF_LOGS_DIR, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"spoof_{timestamp}.jpg"
+    filepath = os.path.join(SPOOF_LOGS_DIR, filename)
+
+    try:
+        cv2.imwrite(filepath, frame)
+        logger.info("Spoof snapshot saved: %s", filepath)
+        return filepath
+    except Exception as e:
+        logger.error("Failed to save spoof snapshot: %s", e)
         return None

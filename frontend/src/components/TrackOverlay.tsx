@@ -17,20 +17,83 @@ interface TrackOverlayProps {
   mirrored?: boolean;
 }
 
-function statusColor(label: string): string {
+import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, ShieldAlert, Smile } from "lucide-react";
+
+function statusColor(label: string, livenessState?: string | null, isSpoof?: boolean): string {
+  if (isSpoof || label === "Spoof Detected") return "var(--destructive)";
+  if (livenessState === "failed" || label === "Liveness Failed") return "var(--destructive)";
+  if (livenessState === "challenge") return "var(--warning)";
+  if (livenessState === "already_logged" || label.includes("(Already Logged Today)")) return "var(--primary)";
   if (label === "Scanning...") return "var(--primary)";
   if (label === "Unknown") return "var(--destructive)";
   if (label === "Error" || label === "No Face Detected") return "var(--muted-foreground)";
-  return "var(--success)";
+  if (livenessState === "passed") return "var(--success)";
+  return "var(--primary)";
 }
 
-function statusText(label: string, progress: number | null): string {
-  if (label === "Scanning...") {
-    return progress !== null ? `Scanning… ${progress}%` : "Scanning…";
+function renderStatusContent(track: Track) {
+  if (track.label === "Spoof Detected" || track.is_spoof) {
+    return (
+      <span className="flex items-center gap-1.5 font-semibold text-destructive">
+        <ShieldAlert className="size-3.5" />
+        <span>Spoof / Screen detected</span>
+      </span>
+    );
   }
-  if (label === "Unknown") return "Unknown";
-  if (label === "Error" || label === "No Face Detected") return "Detection error";
-  return `${label} · logged`;
+
+  if (track.liveness_state === "failed" || track.label === "Liveness Failed") {
+    return (
+      <span className="flex items-center gap-1.5 font-medium text-destructive">
+        <AlertTriangle className="size-3.5" />
+        <span>Liveness challenge failed</span>
+      </span>
+    );
+  }
+
+  if (track.liveness_state === "already_logged" || track.label.includes("(Already Logged Today)")) {
+    const cleanName = track.label.replace(/\s*\(Already Logged Today\)/, "").trim();
+    return (
+      <span className="flex items-center gap-1.5 font-medium text-primary">
+        <CheckCircle2 className="size-3.5" />
+        <span>{cleanName} · Already Logged Today</span>
+      </span>
+    );
+  }
+
+  if (track.liveness_state === "challenge") {
+    const seconds = track.challenge_seconds_left ? `${track.challenge_seconds_left}s` : "";
+    return (
+      <span className="flex items-center gap-1.5 font-medium text-warning">
+        {track.challenge === "smile" && <Smile className="size-3.5" />}
+        {track.challenge === "turn_left" && <ArrowLeft className="size-3.5" />}
+        {track.challenge === "turn_right" && <ArrowRight className="size-3.5" />}
+        <span>{track.challenge_text || "Please follow prompt"}</span>
+        {seconds && <span className="opacity-80 text-[10px] font-mono">({seconds})</span>}
+      </span>
+    );
+  }
+
+  if (track.label === "Scanning...") {
+    return (
+      <span>
+        {track.progress !== null ? `Scanning… ${track.progress}%` : "Scanning…"}
+      </span>
+    );
+  }
+
+  if (track.label === "Unknown") return <span>Unknown</span>;
+  if (track.label === "Error" || track.label === "No Face Detected") return <span>Detection error</span>;
+
+  if (track.liveness_state === "passed") {
+    return (
+      <span className="flex items-center gap-1.5 text-success font-medium">
+        <CheckCircle2 className="size-3.5" />
+        <span>{track.label} · Logged In</span>
+      </span>
+    );
+  }
+
+  return <span>{track.label}</span>;
 }
 
 /** Draws per-track bounding boxes, corner brackets, a scanning sweep, and
@@ -72,7 +135,7 @@ export function TrackOverlay({
         </div>
       ))}
       {tracks.map((track) => {
-        const color = statusColor(track.label);
+        const color = statusColor(track.label, track.liveness_state, track.is_spoof);
         const scanning = track.status === "processing" || track.label === "Scanning...";
 
         const style: CSSProperties = {
@@ -107,7 +170,7 @@ export function TrackOverlay({
               className="absolute top-full left-0 min-h-6 w-max max-w-[calc(200%)] rounded-b-sm border border-t-0 bg-popover/95 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-popover-foreground shadow-sm backdrop-blur-sm"
               style={{ borderColor: "var(--track-color)" }}
             >
-              {statusText(track.label, track.progress)}
+              {renderStatusContent(track)}
             </div>
           </div>
         );

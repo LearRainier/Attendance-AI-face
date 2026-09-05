@@ -1,7 +1,9 @@
 export interface RegisterResponse {
   success: boolean;
   name: string;
+  student_number?: string;
   template_count: number;
+  email_status?: string;
 }
 
 export interface StatusResponse {
@@ -28,6 +30,7 @@ export interface DetectResponse {
 export interface UserProfile {
   name: string;
   template_count: number;
+  student_number?: string;
   email: string;
   phone: string;
   department: string;
@@ -39,6 +42,7 @@ export interface UserProfile {
 
 export interface UserProfileInput {
   name: string;
+  student_number?: string;
   email?: string;
   phone?: string;
   department?: string;
@@ -47,17 +51,38 @@ export interface UserProfileInput {
   notes?: string;
 }
 
-export async function registerFace(name: string, imageB64: string): Promise<RegisterResponse> {
+async function safeParseJson<T = any>(res: Response, fallbackError: string): Promise<T> {
+  const text = await res.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  if (!res.ok) {
+    const errorMsg = (data && (data.detail || data.message)) || (text && text.length < 200 ? text : fallbackError);
+    throw new Error(errorMsg);
+  }
+  return data as T;
+}
+
+export async function registerFace(
+  name: string,
+  imageB64: string,
+  studentNumber: string = "",
+  email: string = ""
+): Promise<RegisterResponse> {
   const res = await fetch("/api/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, image_b64: imageB64 }),
+    body: JSON.stringify({
+      name,
+      student_number: studentNumber,
+      email,
+      image_b64: imageB64,
+    }),
   });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.detail || "Registration failed.");
-  }
-  return data as RegisterResponse;
+  return safeParseJson<RegisterResponse>(res, "Registration failed.");
 }
 
 /** Lightweight face-count/box preview for the Register page's live guide —
@@ -127,11 +152,8 @@ export async function saveUserProfile(profile: UserProfileInput): Promise<UserPr
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(profile),
   });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.detail || "Failed to save user.");
-  }
-  return data.user as UserProfile;
+  const data = await safeParseJson<{ success: boolean; user: UserProfile }>(res, "Failed to save user.");
+  return data.user;
 }
 
 export async function deleteUserProfile(name: string): Promise<void> {
@@ -210,3 +232,109 @@ export async function pauseBackendCamera(): Promise<void> {
 export async function resumeBackendCamera(): Promise<void> {
   await fetch("/api/camera/resume", { method: "POST" });
 }
+
+export interface AuthResponse {
+  success: boolean;
+  token: string;
+  username: string;
+  role?: string;
+  student_number?: string;
+  email?: string;
+}
+
+export interface VerifyAuthResponse {
+  authenticated: boolean;
+  username: string;
+  role?: string;
+  user_info?: Record<string, unknown>;
+}
+
+const AUTH_TOKEN_KEY = "mg_attendance_admin_token";
+const AUTH_USER_KEY = "mg_attendance_admin_user";
+const AUTH_ROLE_KEY = "mg_attendance_user_role";
+
+export function getStoredAuth(): { token: string | null; username: string | null; role: string | null } {
+  return {
+    token: localStorage.getItem(AUTH_TOKEN_KEY),
+    username: localStorage.getItem(AUTH_USER_KEY),
+    role: localStorage.getItem(AUTH_ROLE_KEY) || "admin",
+  };
+}
+
+export function setStoredAuth(token: string, username: string, role: string = "admin") {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+  localStorage.setItem(AUTH_USER_KEY, username);
+  localStorage.setItem(AUTH_ROLE_KEY, role);
+}
+
+export function clearStoredAuth() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
+  localStorage.removeItem(AUTH_ROLE_KEY);
+}
+
+export async function loginAdmin(username: string, password: string): Promise<AuthResponse> {
+  const res = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await safeParseJson<AuthResponse>(res, "Invalid administrator credentials.");
+  setStoredAuth(data.token, data.username, data.role || "admin");
+  return data;
+}
+
+export async function verifyAdminAuth(token: string): Promise<VerifyAuthResponse> {
+  const res = await fetch("/api/auth/verify", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    clearStoredAuth();
+    throw new Error("Session expired or invalid.");
+  }
+  return (await res.json()) as VerifyAuthResponse;
+}
+
+export async function logoutAdmin(): Promise<void> {
+  const { token } = getStoredAuth();
+  if (token) {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      // ignore
+    }
+  }
+  clearStoredAuth();
+}
+
+export async function changeAdminPassword(
+  currentPassword: string,
+  newPassword: string,
+  newUsername?: string
+): Promise<{ success: boolean; token: string; username: string }> {
+  const { token } = getStoredAuth();
+  const res = await fetch("/api/auth/change-password", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token || ""}`,
+    },
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+      new_username: newUsername,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to update credentials.");
+  }
+  if (data.token && data.username) {
+    setStoredAuth(data.token, data.username);
+  }
+  return data;
+}
+

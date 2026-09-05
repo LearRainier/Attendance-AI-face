@@ -12,10 +12,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 export function Register() {
   const [name, setName] = useState("");
+  const [studentNumber, setStudentNumber] = useState("");
+  const [email, setEmail] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<StatusResponse | null>(null);
+
+  const studentNumberValid = /^\d{2}-\d{5}$/.test(studentNumber.trim());
+  const emailValid = email.trim().includes("@") && email.trim().includes(".");
+  const canCapture = Boolean(name.trim() && studentNumberValid && emailValid);
 
   const refreshStatus = () => {
     fetchStatus()
@@ -30,12 +36,29 @@ export function Register() {
   }, []);
 
   const handleCapture = async (imageB64: string) => {
+    if (!studentNumberValid) {
+      setError("Student number must follow YY-NNNNN format (e.g. 26-00123).");
+      return;
+    }
+    if (!emailValid) {
+      setError("Please enter a valid domain email address.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
-      const result = await registerFace(name.trim(), imageB64);
-      setMessage(`Saved template #${result.template_count} for ${result.name}.`);
+      const result = await registerFace(name.trim(), imageB64, studentNumber.trim(), email.trim());
+      if (result.email_status === "already_sent" || result.template_count > 1) {
+        setMessage(
+          `Registered ${result.name} (${studentNumber.trim()}). Face template #${result.template_count} saved (existing credentials preserved).`
+        );
+      } else {
+        setMessage(
+          `Registered ${result.name} (${studentNumber.trim()}). Face template #${result.template_count} saved. Credentials sent to ${email.trim()}.`
+        );
+      }
       refreshStatus();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed.");
@@ -47,24 +70,48 @@ export function Register() {
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Register a Face</h1>
-        <p className="text-sm text-muted-foreground">Capture embeddings for new people to enrol them in recognition</p>
+        <h1 className="text-2xl font-semibold tracking-tight">Register a Student</h1>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         <Card>
           <CardHeader>
-            <CardTitle>Capture template</CardTitle>
-            <CardDescription>Use the browser camera to take a fresh photo</CardDescription>
+            <CardTitle>Student Information & Face Capture</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="register-student-no">Student Number</Label>
+                <Input
+                  id="register-student-no"
+                  type="text"
+                  placeholder="YY-NNNNN (e.g. 26-00123)"
+                  value={studentNumber}
+                  onChange={(e) => setStudentNumber(e.target.value.toUpperCase())}
+                  autoComplete="off"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="register-email">Domain Email</Label>
+                <Input
+                  id="register-email"
+                  type="email"
+                  placeholder="student@domain.edu"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="register-name">Person&apos;s name</Label>
+              <Label htmlFor="register-name">Student Full Name</Label>
               <Input
                 id="register-name"
                 list="registered-people-names"
                 type="text"
-                placeholder="Select an existing person or type a new name"
+                placeholder="e.g. Juan Dela Cruz"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 autoComplete="off"
@@ -72,17 +119,19 @@ export function Register() {
               <datalist id="registered-people-names">
                 {status?.people.map((p) => <option key={p.name} value={p.name} />)}
               </datalist>
-              <p className="text-xs text-muted-foreground">
-                Pick an existing person from the list to add another template for them, or type a new name to
-                register someone new.
-              </p>
             </div>
 
             <FaceCapture
               onCapture={handleCapture}
               busy={busy}
-              captureBlocked={!name.trim()}
-              captureBlockedHint="Enter a name above to enable capture."
+              captureBlocked={!canCapture}
+              captureBlockedHint={
+                !name.trim()
+                  ? "Enter full name to enable capture."
+                  : !studentNumberValid
+                  ? "Enter a valid student number (YY-NNNNN)."
+                  : "Enter a valid domain email."
+              }
             />
 
             {message && (

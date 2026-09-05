@@ -103,7 +103,7 @@ export function useDeviceCamera({
     const support = cameraSupport();
     if (!support.supported) {
       setStatus("error");
-      setError(support.reason);
+      setError(support.reason ?? "Camera not supported.");
       return;
     }
 

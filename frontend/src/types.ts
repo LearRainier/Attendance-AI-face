@@ -1,4 +1,6 @@
 export type TrackStatus = "idle" | "processing" | "completed";
+export type LivenessState = "none" | "challenge" | "passed" | "failed" | "already_logged";
+export type ChallengeType = "smile" | "turn_left" | "turn_right";
 
 export interface Track {
   track_id: number;
@@ -7,6 +9,11 @@ export interface Track {
   status: TrackStatus;
   distance: number;
   progress: number | null;
+  challenge?: ChallengeType | null;
+  challenge_text?: string | null;
+  challenge_seconds_left?: number | null;
+  liveness_state?: LivenessState | null;
+  is_spoof?: boolean;
 }
 
 /** A real face the backend detected but deliberately refused to scan

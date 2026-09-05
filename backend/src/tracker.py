@@ -31,25 +31,37 @@ class FaceTrack:
         self.last_recognition_time = 0
         self.recognition_attempts = 0
         # Starts True so the toast only fires after a successful attendance
-        # log arms it (worker sets it back to False on log). This is a
-        # one-shot UI signal ONLY — camera_loop flips it back to True again
-        # within one frame of arming the toast banner, so it can't double
-        # as "has this track logged an attendance IN yet" for anything
-        # checked later in the track's life (e.g. on removal/time-out).
+        # log arms it (worker sets it back to False on log).
         self.toast_triggered = True
-        # Separate from toast_triggered: True once this track has
-        # successfully logged an attendance IN, and stays True for the rest
-        # of the track's life — camera_loop checks this on removal to decide
-        # whether the track's disappearance should log a time-out.
         self.attendance_logged_in = False
 
+        # Liveness challenge state
+        self.liveness_state = "none"       # "none", "challenge", "passed", "failed", "already_logged"
+        self.challenge = None              # "smile", "turn_left", "turn_right"
+        self.challenge_text = None         # Instruction prompt for the user
+        self.challenge_start_time = 0.0
+        self.challenge_baseline = None
+        self.challenge_seconds_left = 0.0
+        self.candidate_name = None         # Recognized person name awaiting liveness verification
+        self.latest_landmarks = None      # 5 facial landmark points from YuNet
+        self.is_spoof = False
+        self.spoof_reason = ""
+
     # Labels that should go back to "idle" so the main loop can retry them.
-    RETRYABLE_LABELS = ("Scanning...", "Unknown", "Error", "No Face Detected")
+    RETRYABLE_LABELS = (
+        "Scanning...", "Unknown", "Error", "No Face Detected",
+        "Liveness Failed", "Spoof Detected",
+    )
 
     def update_status(self, label, distance=-1.0):
         """Update label and state based on recognition results."""
         self.label = label
         self.distance = distance
+        if label == "Spoof Detected":
+            self.is_spoof = True
+        elif label not in self.RETRYABLE_LABELS:
+            self.is_spoof = False
+
         if label in self.RETRYABLE_LABELS:
             self.status = "idle"
         else:
@@ -97,7 +109,7 @@ class FaceTracker:
         self.next_track_id = 1
         self.tracks = {}  # {track_id: FaceTrack}
 
-    def update(self, detected_boxes):
+    def update(self, detected_boxes, detected_landmarks=None):
         """
         Update tracks with a new set of detected face bounding boxes.
 
@@ -105,13 +117,14 @@ class FaceTracker:
         ----------
         detected_boxes : list[tuple[int, int, int, int]]
             List of (x, y, w, h) bounding boxes from the detector.
+        detected_landmarks : list[np.ndarray], optional
+            Parallel list of 5-point YuNet landmarks.
 
         Returns
         -------
         tuple[dict[int, FaceTrack], list[FaceTrack]]
             (currently active tracks, tracks removed this call because they
-            aged out — i.e. the face left frame). The caller uses the second
-            list to detect "the person left" and log a time-out.
+            aged out — i.e. the face left frame).
         """
         current_time = time.time()
         
@@ -139,6 +152,8 @@ class FaceTracker:
             # Map detection to this track
             track = self.tracks[track_id]
             track.bbox = detected_boxes[det_idx]
+            if detected_landmarks and det_idx < len(detected_landmarks):
+                track.latest_landmarks = detected_landmarks[det_idx]
             track.last_seen = current_time
             
             matched_tracks.add(track_id)
@@ -162,6 +177,8 @@ class FaceTracker:
         for det_idx in unmatched_detections:
             det_box = detected_boxes[det_idx]
             new_track = FaceTrack(self.next_track_id, det_box)
+            if detected_landmarks and det_idx < len(detected_landmarks):
+                new_track.latest_landmarks = detected_landmarks[det_idx]
             self.tracks[self.next_track_id] = new_track
             logger.debug("New track locked, assigned ID %d.", self.next_track_id)
             self.next_track_id += 1

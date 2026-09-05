@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, CheckCircle2, Clock, LogIn, LogOut, ScanFace, Users, Wifi, WifiOff, XCircle } from "lucide-react";
+import { Activity, CheckCircle2, Clock, LogIn, ScanFace, Users, Wifi, WifiOff, XCircle } from "lucide-react";
 
 import { fetchStatus, logManualAttendance } from "@/api";
 import { useLiveFeed } from "@/hooks/useLiveFeed";
@@ -233,7 +233,7 @@ export function Dashboard() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Manual Time In / Time Out</CardTitle>
+              <CardTitle>Manual Time In</CardTitle>
               <CardDescription>Fallback for when face recognition isn&apos;t practical</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
@@ -248,23 +248,14 @@ export function Dashboard() {
                 />
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div>
                 <Button
-                  className="flex-1"
+                  className="w-full"
                   onClick={() => handleManualEvent("IN")}
                   disabled={!selectedName || manualBusy !== null}
                 >
                   <LogIn className="size-4" />
                   {manualBusy === "IN" ? "Timing in…" : "Time In"}
-                </Button>
-                <Button
-                  className="flex-1"
-                  variant="outline"
-                  onClick={() => handleManualEvent("OUT")}
-                  disabled={!selectedName || manualBusy !== null}
-                >
-                  <LogOut className="size-4" />
-                  {manualBusy === "OUT" ? "Timing out…" : "Time Out"}
                 </Button>
               </div>
 
