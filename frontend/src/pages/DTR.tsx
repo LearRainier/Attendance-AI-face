@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, Clock, Download, FileClock } from "lucide-react";
+import { CalendarClock, Download, FileClock } from "lucide-react";
 
 import { fetchAttendance, fetchStatus, type AttendanceRecord } from "@/api";
 import { KpiCard } from "@/components/KpiCard";
@@ -12,7 +12,6 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -21,59 +20,66 @@ import {
 interface DayRecord {
   date: string; // "YYYY-MM-DD"
   timeInTs: string | null;
-  timeOutTs: string | null;
-  hours: number | null; // null when the day has no complete IN+OUT pair yet
-}
-
-function currentMonthKey(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function parseTimestamp(ts: string): Date {
-  const [datePart, timePart] = ts.split(" ");
-  const [y, m, d] = datePart.split("-").map(Number);
-  const [hh, mm, ss] = (timePart ?? "0:0:0").split(":").map(Number);
-  return new Date(y, m - 1, d, hh, mm, ss);
+  // Backend stamps as "YYYY-MM-DD HH:MM:SS"
+  return new Date(ts.replace(" ", "T"));
 }
 
 function timeLabel(ts: string): string {
-  return parseTimestamp(ts).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", hour12: true });
+  const d = parseTimestamp(ts);
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-function dayLabel(dateKey: string): string {
-  const [y, m, d] = dateKey.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+function dayLabel(isoDate: string): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.toLocaleDateString(undefined, {
     weekday: "short",
     month: "short",
     day: "numeric",
   });
 }
 
-function monthLabel(monthKey: string): string {
-  const [y, m] = monthKey.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+function monthLabel(isoMonth: string): string {
+  const [y, m] = isoMonth.split("-").map(Number);
+  const date = new Date(y, m - 1, 1);
+  return date.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 }
 
 export function DTR() {
-  const [records, setRecords] = useState<AttendanceRecord[] | null>(null);
   const [people, setPeople] = useState<string[]>([]);
   const [selectedName, setSelectedName] = useState<string>("");
-  const [month, setMonth] = useState<string>(currentMonthKey());
+  const [month, setMonth] = useState<string>(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    return `${y}-${m}`;
+  });
+  const [records, setRecords] = useState<AttendanceRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([fetchAttendance(), fetchStatus()])
-      .then(([attendance, status]) => {
-        setRecords(attendance);
-        const names = status.people.map((p) => p.name);
+    fetchStatus()
+      .then((s) => {
+        const names = s.people.map((p) => p.name);
         setPeople(names);
-        setSelectedName((prev) => prev || names[0] || "");
+        if (names.length > 0) setSelectedName(names[0]);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load attendance."));
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load registered people."));
   }, []);
 
-  const days = useMemo<DayRecord[]>(() => {
+  useEffect(() => {
+    fetchAttendance()
+      .then((data) => {
+        setRecords(data);
+        setError(null);
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load attendance records."));
+  }, []);
+
+  const days: DayRecord[] = useMemo(() => {
     if (!records || !selectedName) return [];
 
     const byDate = new Map<string, AttendanceRecord[]>();
@@ -88,37 +94,23 @@ export function DTR() {
     const result: DayRecord[] = [];
     for (const [date, dayRecords] of byDate) {
       const ins = dayRecords.filter((r) => r.type === "IN").sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      const outs = dayRecords.filter((r) => r.type === "OUT").sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      const timeInTs = ins[0]?.timestamp ?? null;
-      const timeOutTs = outs.length > 0 ? outs[outs.length - 1].timestamp : null;
-
-      let hours: number | null = null;
-      if (timeInTs && timeOutTs) {
-        const rawHours = (parseTimestamp(timeOutTs).getTime() - parseTimestamp(timeInTs).getTime()) / 3_600_000;
-        hours = rawHours >= 0 ? rawHours : null; // guard against clock anomalies
-      }
-
-      result.push({ date, timeInTs, timeOutTs, hours });
+      const timeInTs = ins[0]?.timestamp ?? dayRecords[0]?.timestamp ?? null;
+      result.push({ date, timeInTs });
     }
 
     result.sort((a, b) => a.date.localeCompare(b.date));
     return result;
   }, [records, selectedName, month]);
 
-  const totalHours = useMemo(() => days.reduce((sum, d) => sum + (d.hours ?? 0), 0), [days]);
-  const completeDays = days.filter((d) => d.hours !== null).length;
-
   const handleExportCsv = () => {
-    const header = "Date,Time In,Time Out,Hours Rendered\n";
+    const header = "Date,Time In\n";
     const rows = days.map((d) =>
       [
         d.date,
         d.timeInTs ? timeLabel(d.timeInTs) : "",
-        d.timeOutTs ? timeLabel(d.timeOutTs) : "",
-        d.hours !== null ? d.hours.toFixed(2) : "",
       ].join(",")
     );
-    const csv = header + rows.join("\n") + `\nTotal,,,${totalHours.toFixed(2)}\n`;
+    const csv = header + rows.join("\n") + "\n";
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -136,7 +128,7 @@ export function DTR() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Daily Time Record</h1>
           <p className="text-sm text-muted-foreground">
-            Time in / time out and hours rendered, built from face-recognition events
+            Daily check-in records built from face-recognition events
           </p>
         </div>
         <Button onClick={handleExportCsv} disabled={days.length === 0} variant="outline">
@@ -184,10 +176,8 @@ export function DTR() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:w-72">
             <KpiCard label="Days logged this month" value={String(days.length)} icon={CalendarClock} />
-            <KpiCard label="Days with a full IN + OUT" value={String(completeDays)} icon={FileClock} />
-            <KpiCard label="Overall total hours rendered" value={`${totalHours.toFixed(2)} hrs`} icon={Clock} />
           </div>
 
           <Card className="gap-0 py-0">
@@ -204,8 +194,6 @@ export function DTR() {
                     <TableRow>
                       <TableHead>Date</TableHead>
                       <TableHead>Time In</TableHead>
-                      <TableHead>Time Out</TableHead>
-                      <TableHead className="text-right">Hours Rendered</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -213,25 +201,9 @@ export function DTR() {
                       <TableRow key={d.date}>
                         <TableCell className="font-medium">{dayLabel(d.date)}</TableCell>
                         <TableCell>{d.timeInTs ? timeLabel(d.timeInTs) : "—"}</TableCell>
-                        <TableCell>
-                          {d.timeOutTs ? (
-                            timeLabel(d.timeOutTs)
-                          ) : (
-                            <span className="text-muted-foreground">no time-out yet</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {d.hours !== null ? `${d.hours.toFixed(2)} hrs` : "—"}
-                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
-                  <TableFooter>
-                    <TableRow>
-                      <TableCell colSpan={3}>Overall Total Hours Rendered</TableCell>
-                      <TableCell className="text-right font-semibold">{totalHours.toFixed(2)} hrs</TableCell>
-                    </TableRow>
-                  </TableFooter>
                 </Table>
               ) : (
                 <div className="flex flex-col items-center gap-2 py-16 text-center text-sm text-muted-foreground">

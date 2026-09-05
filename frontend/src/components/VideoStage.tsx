@@ -128,12 +128,12 @@ export function VideoStage({
     );
   }
 
-  const mediaStyle = rect
+  const mediaStyle: React.CSSProperties = rect
     ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
-    : { opacity: 0 };
+    : { width: "100%", height: "100%", objectFit: "contain" };
 
   return (
-    <div ref={containerRef} className="relative flex-1 overflow-hidden bg-black">
+    <div ref={containerRef} className="relative w-full h-full min-h-[360px] flex-1 overflow-hidden bg-black flex items-center justify-center">
       {stream ? (
         <video
           ref={(element) => {

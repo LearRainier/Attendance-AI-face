@@ -17,12 +17,16 @@ import logging
 import queue
 import threading
 import time
+import re
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Optional, Any, Tuple, List, Dict
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header, Depends, Query
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -30,6 +34,14 @@ from pydantic import BaseModel
 from src.tracker import FaceTracker
 from src.detection import FaceDetector, MAX_FACE_WIDTH_RATIO, MIN_FACE_WIDTH_RATIO
 from src.recognition import build_match_index, get_embedding, MODEL_NAME
+from src.liveness import (
+    pick_random_challenge,
+    CHALLENGE_PROMPTS,
+    CHALLENGE_TIMEOUT_SECONDS,
+    evaluate_challenge,
+)
+from src.antispoof import check_anti_spoof, warmup_antispoof
+from src.emailer import dispatch_student_credentials, generate_temporary_password
 from src.utils import (
     load_registered_faces,
     verify_face_roi,
@@ -37,22 +49,41 @@ from src.utils import (
     log_attendance,
     manual_time_event,
     save_unknown_snapshot,
+    save_spoof_snapshot,
     register_face_embedding,
     load_user_profiles,
     save_user_profile,
     delete_user_profile,
+    delete_face_templates,
+    wipe_all_data,
     ensure_user_profile_stub,
     load_settings,
-    save_settings,
+    verify_admin_credentials,
+    update_admin_credentials,
+    create_admin_token,
+    verify_admin_token,
+    revoke_admin_token,
+    has_logged_in_today,
+    get_pht_now,
+    verify_user_credentials,
+    create_user_token,
+    verify_user_token,
+    verify_any_token,
+    set_user_password,
+    _hash_password,
+    sanitize_name,
     ATTENDANCE_CSV,
 )
+from src.db import init_db, get_all_attendance_records
 
 import os
 
 logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_DIST = os.path.join(BASE_DIR, "frontend", "dist")
+_sibling_dist = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend", "dist"))
+_child_dist = os.path.abspath(os.path.join(BASE_DIR, "frontend", "dist"))
+FRONTEND_DIST = _sibling_dist if os.path.isdir(_sibling_dist) else _child_dist
 
 DEFAULT_CAMERA_INDEX = 0  # only the fallback: the camera actually in use is
                           # picked in the dashboard, kept in AppState.camera_index
@@ -75,8 +106,11 @@ CAMERA_WARMUP_INTERVAL = 0.1    # ...spaced this far apart (so ...~2s total)
 # doesn't support it the driver clamps to its nearest mode and the actually
 # negotiated size is read back from the returned frame's own shape, so this
 # never fails loudly — it just quietly gets whatever the hardware allows.
-CAPTURE_REQUEST_WIDTH = 1920
-CAPTURE_REQUEST_HEIGHT = 1080
+# Requested capture resolution: 720p (1280x720) with MJPG delivers smooth
+# ~30fps while providing more than enough pixel density for face chips (DeepFace
+# only requires 112x112). 1080p uncompressed YUY2 over USB 2.0 stalls webcams at ~5fps.
+CAPTURE_REQUEST_WIDTH = 1280
+CAPTURE_REQUEST_HEIGHT = 720
 
 # Capture backends to try, in order, for any device index. DirectShow first on
 # Windows: OpenCV defaults to MSMF there, and on hardware like this project's
@@ -123,30 +157,30 @@ FACE_DETECTOR = FaceDetector()
 class AppState:
     def __init__(self):
         self.lock = threading.Lock()
-        self.latest_jpeg = None
+        self.latest_jpeg: Optional[bytes] = None
         # Size of the frame `tracks`/`hints` were computed on — see the note
         # in _refresh_broadcast_payload.
-        self.frame_width = 0
-        self.frame_height = 0
-        self.tracks = []
+        self.frame_width: int = 0
+        self.frame_height: int = 0
+        self.tracks: List[Any] = []
         # Real faces that were detected but rejected by the range gate, so
         # the dashboard can show a "step closer" hint instead of just
         # ignoring someone silently. Never tracked, scanned, or logged.
-        self.hints = []
-        self.toast = None
-        self.fps = 0.0
-        self.registered_count = 0
-        self.recent_checkins = []
-        self.registered_faces = {}
-        self.match_index = ([], np.zeros((0, 0)))
-        self.camera_active = False
+        self.hints: List[Any] = []
+        self.toast: Optional[Dict[str, Any]] = None
+        self.fps: float = 0.0
+        self.registered_count: int = 0
+        self.recent_checkins: List[Any] = []
+        self.registered_faces: Dict[str, Any] = {}
+        self.match_index: Tuple[List[Any], np.ndarray] = ([], np.zeros((0, 0)))
+        self.camera_active: bool = False
         # Which device index the dashboard asked for, which one camera_loop
         # actually has open right now (None while released/switching), the
         # cameras found by the last scan, and the last open/read failure so
         # the UI can say *why* the feed is black instead of just showing
         # "waiting for camera" forever.
-        self.camera_index = DEFAULT_CAMERA_INDEX
-        self.camera_open_index = None
+        self.camera_index: int = DEFAULT_CAMERA_INDEX
+        self.camera_open_index: Optional[int] = None
         # "camera_loop owns the device, or is in the middle of acquiring it."
         # What /api/camera/pause and a camera scan wait to go False, rather
         # than waiting on camera_active: opening a camera can take seconds
@@ -154,13 +188,13 @@ class AppState:
         # still False even though the loop is about to take the device — so
         # pause would answer "released, go ahead" and then steal the webcam
         # back from the browser's getUserMedia a moment later.
-        self.camera_held = False
+        self.camera_held: bool = False
         # SOURCE_LOCAL or SOURCE_BROWSER — see the constants above. Flipped by
         # a device connecting to /ws/ingest, and back when it disconnects.
-        self.camera_source = SOURCE_LOCAL
-        self.source_label = None  # e.g. "iPhone · front camera", for the UI
-        self.cameras = []
-        self.camera_error = None
+        self.camera_source: str = SOURCE_LOCAL
+        self.source_label: Optional[str] = None  # e.g. "iPhone · front camera", for the UI
+        self.cameras: List[Any] = []
+        self.camera_error: Optional[str] = None
         # Pre-serialized JSON for /ws/live, rebuilt once per camera-loop
         # tick (see _refresh_broadcast_payload) rather than once per
         # connected client — see that function's docstring for why.
@@ -305,13 +339,18 @@ class FaceRecognitionWorker(threading.Thread):
         self.last_unknown_snapshot = 0.0
         self.unknown_snapshot_cooldown = UNKNOWN_SNAPSHOT_COOLDOWN_SECONDS
 
-    def queue_recognition(self, track_id, face_chip):
-        self.task_queue.put((track_id, face_chip))
+    def queue_recognition(self, track_id, face_chip, frame=None, bbox=None):
+        self.task_queue.put((track_id, face_chip, frame, bbox))
 
     def run(self):
         while self.running:
             try:
-                track_id, face_chip = self.task_queue.get(timeout=0.1)
+                item = self.task_queue.get(timeout=0.1)
+                if len(item) == 4:
+                    track_id, face_chip, frame_snapshot, bbox_snapshot = item
+                else:
+                    track_id, face_chip = item[:2]
+                    frame_snapshot, bbox_snapshot = None, None
             except queue.Empty:
                 continue
 
@@ -334,16 +373,60 @@ class FaceRecognitionWorker(threading.Thread):
             with self.lock:
                 track = self.tracks.get(track_id)
                 if track is not None:
-                    track.update_status(name, distance)
                     track.last_recognition_time = time.time()
                     track.recognition_attempts += 1
                     logger.debug("Scan completed for track %d: %s (dist: %.4f)", track_id, name, distance)
 
-                    if name not in ("Scanning...", "No Face Detected", "Error", "Unknown"):
-                        logged = log_attendance(name, track_id=track_id, event_type="IN")
-                        if logged:
-                            track.toast_triggered = False
-                            track.attendance_logged_in = True
+                    non_person_labels = (
+                        "Scanning...", "No Face Detected", "Error", "Unknown",
+                        "No Registered Faces", "Spoof Detected", "Liveness Failed",
+                    )
+                    if name not in non_person_labels:
+                        # Gate 1: Passive Anti-Spoofing check (MiniFASNet + screen artifacts)
+                        is_real, spoof_reason, spoof_score = True, "genuine", 1.0
+                        if frame_snapshot is not None and bbox_snapshot is not None:
+                            is_real, spoof_reason, spoof_score = check_anti_spoof(frame_snapshot, bbox_snapshot)
+
+                        if not is_real:
+                            track.is_spoof = True
+                            track.spoof_reason = spoof_reason
+                            track.update_status("Spoof Detected", distance)
+                            track.liveness_state = "failed"
+                            track.label = "Spoof Detected"
+                            save_spoof_snapshot(face_chip)
+                            logger.warning(
+                                "REPLAY ATTACK BLOCKED: Track %d spoof detected (%s, score: %.3f) for candidate '%s'",
+                                track_id, spoof_reason, spoof_score, name
+                            )
+                        else:
+                            track.is_spoof = False
+                            if has_logged_in_today(name):
+                                track.candidate_name = name
+                                track.liveness_state = "already_logged"
+                                track.label = f"{name} (Already Logged Today)"
+                                track.status = "completed"
+                                track.attendance_logged_in = False
+                                track.toast_triggered = True
+                                logger.info("Track %d matched as %s — already logged in today.", track_id, name)
+                            else:
+                                if track.liveness_state in ("none", "failed"):
+                                    track.candidate_name = name
+                                    track.challenge = pick_random_challenge()
+                                    track.challenge_text = CHALLENGE_PROMPTS.get(track.challenge, "Please follow prompt")
+                                    track.challenge_start_time = time.time()
+                                    track.challenge_seconds_left = CHALLENGE_TIMEOUT_SECONDS
+                                    track.challenge_baseline = None
+                                    track.liveness_state = "challenge"
+                                    track.label = f"{name} - {track.challenge_text}"
+                                    track.status = "idle"
+                                    logger.info(
+                                        "Track %d matched as %s (anti-spoof passed, score: %.2f); issuing active liveness challenge: %s",
+                                        track_id, name, spoof_score, track.challenge
+                                    )
+                                elif track.liveness_state == "passed":
+                                    track.update_status(name, distance)
+                    else:
+                        track.update_status(name, distance)
 
                     if name == "Unknown":
                         now = time.time()
@@ -443,11 +526,17 @@ def _open_capture(index):
             capture.release()
             continue
 
-        # Best-effort — a device that doesn't support this mode just ignores
-        # it and keeps its own default, which the post-warm-up frame shape
-        # below reports honestly rather than trusting these back.
+        # Request hardware MJPG compression and 30fps to avoid 5fps USB 2.0 uncompressed bottlenecks
+        try:
+            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        except Exception:
+            pass
         capture.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_REQUEST_WIDTH)
         capture.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_REQUEST_HEIGHT)
+        try:
+            capture.set(cv2.CAP_PROP_FPS, 30)
+        except Exception:
+            pass
 
         for _ in range(CAMERA_WARMUP_ATTEMPTS):
             ok, frame = capture.read()
@@ -473,7 +562,9 @@ def _probe_cameras():
     found = []
     for index in range(CAMERA_PROBE_MAX_INDEX + 1):
         capture, backend_name, frame = _open_capture(index)
-        if capture is None:
+        if capture is None or frame is None:
+            if capture is not None:
+                capture.release()
             continue
         try:
             h, w = frame.shape[:2]
@@ -551,6 +642,7 @@ def camera_loop():
 
     try:
         while not _shutdown_event.is_set():
+            frame: Any = None
             # Reasons to hand the local device back: registration (browser
             # getUserMedia needs exclusive access on some drivers, so the
             # Register page calls /api/camera/pause), a camera scan, which has
@@ -698,6 +790,9 @@ def camera_loop():
                     state.camera_error = None
 
             if source == SOURCE_LOCAL:
+                if video_capture is None:
+                    time.sleep(0.05)
+                    continue
                 ret, frame = video_capture.read()
                 if not ret or frame is None:
                     consecutive_read_failures += 1
@@ -718,6 +813,10 @@ def camera_loop():
                     continue
                 consecutive_read_failures = 0
 
+            if frame is None:
+                time.sleep(0.03)
+                continue
+
             fps_frame_count += 1
             elapsed = time.time() - fps_timer
             if elapsed >= 1.0:
@@ -725,33 +824,76 @@ def camera_loop():
                 fps_frame_count = 0
                 fps_timer = time.time()
 
-            # 1. Local face detection. Only detections that are actually
-            #    face-shaped AND inside the configured distance range reach
-            #    the tracker — out_of_range holds real faces that are too
-            #    far (or too close) to scan, which are shown to the user as
-            #    a hint but never tracked, so someone standing in the
-            #    background is never recognized or logged.
-            detected_boxes, out_of_range = FACE_DETECTOR.detect(frame)
+            # 1. Local face detection with landmarks
+            det_res = FACE_DETECTOR.detect(frame, return_landmarks=True)
+            detected_boxes, detected_landmarks, out_of_range = det_res[0], det_res[1], det_res[2]
 
-            # 2. Update tracking + queue recognition / toast triggers
+            # 2. Update tracking + queue recognition / liveness checks
             with tracks_lock:
-                current_tracks, removed_tracks = tracker.update(detected_boxes)
+                current_tracks, removed_tracks = tracker.update(detected_boxes, detected_landmarks)
 
-                # A track that already logged a successful time-in
-                # (attendance_logged_in went True when that happened — see
-                # the worker below) just left frame for good: log its
-                # time-out now, at the moment it's actually gone, not some
-                # later inferred guess.
-                for removed in removed_tracks:
-                    if removed.attendance_logged_in:
-                        log_attendance(removed.label, track_id=removed.track_id, event_type="OUT")
+                # Automatic logout is removed per specifications (single daily check-in IN only).
+                # Removed tracks are allowed to age out cleanly without triggering OUT events.
 
                 for track_id, track in list(current_tracks.items()):
                     now = time.time()
+
+                    # Evaluate active liveness gesture in real time
+                    if track.liveness_state == "challenge":
+                        elapsed = now - track.challenge_start_time
+                        status, seconds_left, metrics = evaluate_challenge(
+                            track.challenge,
+                            track.latest_landmarks,
+                            track.challenge_baseline,
+                            elapsed,
+                            timeout=CHALLENGE_TIMEOUT_SECONDS,
+                        )
+                        track.challenge_seconds_left = seconds_left
+                        if track.challenge_baseline is None and metrics:
+                            track.challenge_baseline = metrics
+
+                        if status == "passed":
+                            # Gate 2: Final Anti-Spoof Confirmation Check
+                            # Prevents any on-the-fly screen swap or video replay passing
+                            is_real, spoof_reason, spoof_score = check_anti_spoof(frame, track.bbox)
+                            if not is_real:
+                                track.is_spoof = True
+                                track.spoof_reason = spoof_reason
+                                track.liveness_state = "failed"
+                                track.update_status("Spoof Detected")
+                                track.label = "Spoof Detected"
+                                save_spoof_snapshot(crop_face_with_padding(frame, track.bbox))
+                                logger.warning(
+                                    "Active challenge passed but presentation attack caught by anti-spoof (%s, score: %.3f)",
+                                    spoof_reason, spoof_score
+                                )
+                            else:
+                                track.liveness_state = "passed"
+                                confirmed_name = track.candidate_name or track.label.split(" - ")[0]
+                                track.update_status(confirmed_name)
+                                logged = log_attendance(confirmed_name, track_id=track_id, event_type="IN")
+                                if logged:
+                                    track.toast_triggered = False
+                                    track.attendance_logged_in = True
+                                    logger.info(
+                                        "Active liveness & anti-spoof passed for %s (%s). Check-in logged IN.",
+                                        confirmed_name, track.challenge
+                                    )
+                                else:
+                                    track.attendance_logged_in = False
+                                    track.toast_triggered = True
+                                    track.liveness_state = "already_logged"
+                                    track.label = f"{confirmed_name} (Already Logged Today)"
+                        elif status == "failed":
+                            track.liveness_state = "failed"
+                            track.update_status("Liveness Failed")
+                            save_spoof_snapshot(crop_face_with_padding(frame, track.bbox))
+                            logger.warning("Active liveness challenge timed out for track %d (%s).", track_id, track.candidate_name)
+
                     need_recognition = False
                     track_duration = now - track.first_seen
 
-                    if track.status == "idle":
+                    if track.status == "idle" and track.liveness_state != "challenge":
                         if track.recognition_attempts == 0:
                             if track_duration >= FIRST_SCAN_DELAY_SECONDS:
                                 need_recognition = True
@@ -763,21 +905,18 @@ def camera_loop():
                         if face_chip.size > 0:
                             track.status = "processing"
                             logger.debug("Scan duration reached, queueing track %d for recognition.", track_id)
-                            _worker.queue_recognition(track_id, face_chip)
+                            if _worker is not None:
+                                _worker.queue_recognition(track_id, face_chip, frame.copy(), track.bbox)
 
-                    if track.status == "completed" and not track.toast_triggered:
+                    if track.attendance_logged_in and not track.toast_triggered:
                         toast_active = True
                         toast_name = track.label
                         toast_start_time = time.time()
                         track.toast_triggered = True
 
                         with state.lock:
-                            # %I is zero-padded (e.g. "04:13:46 PM"); lstrip
-                            # drops that one leading zero for a natural
-                            # "4:13:46 PM" — safe here since %I always
-                            # produces exactly two digits, so there's at
-                            # most one to strip.
-                            checkin_time = datetime.now().strftime("%I:%M:%S %p").lstrip("0")
+                            # Natural "4:13:46 PM" timestamp in Philippine Standard Time (PST/PHT: UTC+8)
+                            checkin_time = get_pht_now().strftime("%I:%M:%S %p").lstrip("0")
                             state.recent_checkins.append((track.label, checkin_time))
                             if len(state.recent_checkins) > RECENT_CHECKINS_MAX:
                                 state.recent_checkins = state.recent_checkins[-RECENT_CHECKINS_MAX:]
@@ -796,6 +935,11 @@ def camera_loop():
                         "status": track.status,
                         "distance": float(track.distance),
                         "progress": progress,
+                        "challenge": track.challenge,
+                        "challenge_text": track.challenge_text,
+                        "challenge_seconds_left": round(track.challenge_seconds_left, 1),
+                        "liveness_state": track.liveness_state,
+                        "is_spoof": getattr(track, "is_spoof", False),
                     })
 
             if toast_active and time.time() - toast_start_time > TOAST_DURATION_SECONDS:
@@ -871,6 +1015,15 @@ async def lifespan(app: FastAPI):
         "Detection range: face width %.0f%%-%.0f%% of frame width (faces outside it are ignored).",
         MIN_FACE_WIDTH_RATIO * 100, MAX_FACE_WIDTH_RATIO * 100,
     )
+
+    logger.info("Warming up the anti-spoofing engine (MiniFASNet)...")
+    try:
+        warmup_antispoof()
+    except Exception as e:
+        logger.warning("Anti-spoofing warmup warning: %s", e)
+
+    logger.info("Initializing SQLite database...")
+    init_db()
 
     logger.info("Loading registered templates...")
     _reload_registered_faces()
@@ -1060,6 +1213,8 @@ async def _stop_browser_source():
 
 class RegisterRequest(BaseModel):
     name: str
+    student_number: str = ""
+    email: str = ""
     image_b64: str  # raw base64 or a data: URL from a <canvas>.toDataURL()
 
 
@@ -1076,6 +1231,17 @@ def _decode_image_b64(image_b64: str):
 
 @app.post("/api/register")
 def api_register(payload: RegisterRequest):
+    student_num = payload.student_number.strip().upper()
+    if student_num and not re.match(r"^\d{2}-\d{5}$", student_num):
+        raise HTTPException(
+            status_code=400,
+            detail="Student number must follow the YY-NNNNN format (e.g. 26-00123).",
+        )
+
+    email = payload.email.strip()
+    if email and ("@" not in email or "." not in email):
+        raise HTTPException(status_code=400, detail="Please enter a valid domain email address.")
+
     image = _decode_image_b64(payload.image_b64)
     if image is None:
         raise HTTPException(status_code=400, detail="Could not decode the captured image.")
@@ -1085,8 +1251,63 @@ def api_register(payload: RegisterRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    clean_name = sanitize_name(name)
+    profiles = load_user_profiles()
+    existing_profile = profiles.get(clean_name, {})
+
+    # Check if student already has saved credentials
+    existing_password = existing_profile.get("temp_password") or existing_profile.get("password_hash")
+    existing_sent = existing_profile.get("credentials_sent", False)
+
+    if existing_password:
+        # Preserve existing credentials! Do not regenerate a new password.
+        temp_password = existing_profile.get("temp_password")
+        salt = existing_profile.get("salt") or secrets.token_hex(16)
+        pwd_hash = existing_profile.get("password_hash") or (_hash_password(temp_password, salt) if temp_password else "")
+        email_status = "already_sent"
+    else:
+        # First template for this student: generate initial credentials
+        temp_password = generate_temporary_password()
+        salt = secrets.token_hex(16)
+        pwd_hash = _hash_password(temp_password, salt)
+        email_status = "pending"
+
+    profile_updates = {
+        "student_number": student_num or existing_profile.get("student_number", ""),
+        "employee_id": student_num or existing_profile.get("employee_id", ""),
+        "email": email or existing_profile.get("email", ""),
+        "account_id": student_num or clean_name,
+        "salt": salt,
+        "password_hash": pwd_hash,
+        "role": "student",
+    }
+    if temp_password:
+        profile_updates["temp_password"] = temp_password
+
+    # Only dispatch email if credentials haven't been dispatched yet (first template)
+    if email and not existing_sent:
+        dispatch_result = dispatch_student_credentials(
+            name, student_num or "N/A", email, temp_password, settings=load_settings()
+        )
+        email_status = dispatch_result.get("status", "sent")
+        profile_updates["credentials_sent"] = True
+        profile_updates["credentials_sent_at"] = get_pht_now().isoformat()
+    elif existing_sent:
+        profile_updates["credentials_sent"] = True
+        email_status = "already_sent"
+    else:
+        email_status = "skipped"
+
+    save_user_profile(clean_name, profile_updates)
     _reload_registered_faces()
-    return {"success": True, "name": name, "template_count": template_count}
+
+    return {
+        "success": True,
+        "name": name,
+        "student_number": student_num,
+        "template_count": template_count,
+        "email_status": email_status,
+    }
 
 
 class DetectRequest(BaseModel):
@@ -1136,6 +1357,7 @@ class UserProfileRequest(BaseModel):
     phone: str = ""
     department: str = ""
     position: str = ""
+    student_number: str = ""
     employee_id: str = ""
     notes: str = ""
 
@@ -1153,6 +1375,7 @@ def api_list_users():
     users = []
     for name in names:
         profile = profiles.get(name, {})
+        student_num = profile.get("student_number") or profile.get("employee_id") or ""
         users.append({
             "name": name,
             "template_count": len(registered_faces.get(name, [])),
@@ -1160,7 +1383,8 @@ def api_list_users():
             "phone": profile.get("phone", ""),
             "department": profile.get("department", ""),
             "position": profile.get("position", ""),
-            "employee_id": profile.get("employee_id", ""),
+            "student_number": student_num,
+            "employee_id": student_num,
             "notes": profile.get("notes", ""),
             "updated_at": profile.get("updated_at"),
         })
@@ -1170,7 +1394,12 @@ def api_list_users():
 @app.post("/api/users")
 def api_save_user(payload: UserProfileRequest):
     try:
-        profile = save_user_profile(payload.name, payload.model_dump(exclude={"name"}))
+        data = payload.model_dump(exclude={"name"})
+        if data.get("student_number") and not data.get("employee_id"):
+            data["employee_id"] = data["student_number"]
+        elif data.get("employee_id") and not data.get("student_number"):
+            data["student_number"] = data["employee_id"]
+        profile = save_user_profile(payload.name, data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"success": True, "user": profile}
@@ -1179,8 +1408,204 @@ def api_save_user(payload: UserProfileRequest):
 @app.delete("/api/users/{name}")
 def api_delete_user(name: str):
     if not delete_user_profile(name):
-        raise HTTPException(status_code=404, detail="No profile found for that name.")
+        raise HTTPException(status_code=404, detail="No profile or face templates found for that name.")
+    _reload_registered_faces()
     return {"success": True}
+
+
+@app.post("/api/admin/wipe-data")
+def api_wipe_data():
+    """Wipe all collected attendance records, registered faces, user profiles, outbox, and logs."""
+    wipe_all_data()
+    _reload_registered_faces()
+    with state.lock:
+        state.recent_checkins = []
+    logger.info("Admin triggered complete data wipe.")
+    return {"success": True, "message": "All data wiped clean."}
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_username: Optional[str] = None
+    new_password: str
+
+
+def get_current_user_session(authorization: Optional[str] = Header(None)) -> dict:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Invalid Authorization header format")
+    token = parts[1]
+    session = verify_any_token(token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session token")
+    return session
+
+
+def get_current_admin(authorization: Optional[str] = Header(None)) -> str:
+    session = get_current_user_session(authorization)
+    if session.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Administrator privileges required.")
+    return session["username"]
+
+
+@app.post("/api/auth/login")
+def api_login(payload: LoginRequest):
+    """Administrator login endpoint strictly for the web dashboard."""
+    username = payload.username.strip()
+    password = payload.password
+
+    if verify_admin_credentials(username, password):
+        token = create_admin_token(username)
+        return {
+            "success": True,
+            "token": token,
+            "username": username,
+            "role": "admin",
+        }
+
+    raise HTTPException(status_code=401, detail="Invalid administrator credentials.")
+
+
+@app.post("/api/student/login")
+@app.post("/api/user/login")
+def api_student_login(payload: LoginRequest):
+    """Dedicated login endpoint for student mobile apps."""
+    user = verify_user_credentials(payload.username.strip(), payload.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid student number, email, or password.")
+    role = user.get("role", "student")
+    token = create_user_token(user["name"], role=role, user_info=user)
+    return {
+        "success": True,
+        "token": token,
+        "username": user["name"],
+        "student_number": user.get("student_number") or user.get("employee_id") or "",
+        "email": user.get("email", ""),
+        "role": role,
+    }
+
+
+@app.get("/api/student/me")
+@app.get("/api/user/me")
+def api_student_me(
+    month: Optional[str] = Query(None),
+    session: dict = Depends(get_current_user_session),
+):
+    """Fetch current student details and their personal attendance records."""
+    username = session["username"]
+    profiles = load_user_profiles()
+    clean_name = sanitize_name(username)
+    profile = profiles.get(clean_name, {})
+
+    # Pull personal attendance records from SQLite
+    records = get_all_attendance_records(name=clean_name, month=month)
+
+    return {
+        "success": True,
+        "name": username,
+        "student_number": profile.get("student_number") or profile.get("employee_id") or "",
+        "email": profile.get("email", ""),
+        "role": session.get("role", "student"),
+        "profile": {k: v for k, v in profile.items() if k not in ("password_hash", "salt")},
+        "attendance": records,
+    }
+
+
+@app.get("/api/download/student-app.apk")
+def download_student_apk():
+    """Serve the compiled Android APK for student direct installation."""
+    downloads_dir = os.path.join(BASE_DIR, "downloads")
+    os.makedirs(downloads_dir, exist_ok=True)
+    apk_path = os.path.join(downloads_dir, "MG-Attendance-Student.apk")
+
+    mobile_apk = os.path.abspath(os.path.join(BASE_DIR, "..", "mobile", "MG-Attendance-Student.apk"))
+    if os.path.isfile(mobile_apk):
+        apk_path = mobile_apk
+
+    if not os.path.isfile(apk_path):
+        return HTMLResponse(
+            status_code=200,
+            content="""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MG Attendance - Student App</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #09090b; color: #f4f4f5; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 24px; box-sizing: border-box; text-align: center; }
+    .card { background: #18181b; border: 1px solid #27272a; border-radius: 16px; padding: 32px 24px; max-width: 440px; width: 100%; box-shadow: 0 16px 32px rgba(0,0,0,0.6); }
+    .badge { display: inline-block; background: rgba(37,99,235,0.15); color: #3b82f6; border: 1px solid rgba(37,99,235,0.3); border-radius: 999px; font-size: 11px; font-weight: 700; padding: 4px 12px; margin-bottom: 16px; letter-spacing: 0.5px; }
+    h1 { font-size: 20px; margin: 0 0 10px; font-weight: 700; color: #f4f4f5; }
+    p { font-size: 13px; color: #a1a1aa; line-height: 1.5; margin: 0 0 20px; }
+    .box { background: #121215; border: 1px solid #27272a; border-radius: 10px; padding: 14px; text-align: left; margin-bottom: 12px; font-size: 13px; color: #d4d4d8; line-height: 1.5; }
+    .box strong { color: #ffffff; }
+    code { background: #27272a; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-family: monospace; color: #93c5fd; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">STUDENT MOBILE APP</div>
+    <h1>Direct APK Download</h1>
+    <p>The standalone Android package (.apk) file is ready to be compiled or placed in <code>backend/downloads/MG-Attendance-Student.apk</code>.</p>
+    <div class="box">
+      <strong>⚡ Instant Testing on Your Phone:</strong><br/>
+      1. On PC, run: <code>cd mobile && npx expo start</code><br/>
+      2. Open <strong>Expo Go</strong> on your phone and scan the QR code.<br/>
+      3. The app opens immediately with full native features!
+    </div>
+  </div>
+</body>
+</html>""",
+        )
+
+    return FileResponse(
+        path=apk_path,
+        filename="MG-Attendance-Student.apk",
+        media_type="application/vnd.android.package-archive",
+    )
+
+
+@app.get("/api/auth/verify")
+def api_verify_auth(session: dict = Depends(get_current_user_session)):
+    return {
+        "authenticated": True,
+        "username": session["username"],
+        "role": session.get("role", "admin"),
+        "user_info": session.get("user_info", {}),
+    }
+
+
+@app.post("/api/auth/logout")
+def api_logout(authorization: Optional[str] = Header(None)):
+    if authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            revoke_admin_token(parts[1])
+    return {"success": True}
+
+
+@app.post("/api/auth/change-password")
+def api_change_password(payload: ChangePasswordRequest, admin_user: str = Depends(get_current_admin)):
+    if not verify_admin_credentials(admin_user, payload.current_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect.")
+    if not payload.new_password or len(payload.new_password.strip()) < 4:
+        raise HTTPException(status_code=400, detail="New password must be at least 4 characters.")
+    new_user = payload.new_username.strip() if payload.new_username else admin_user
+    update_admin_credentials(new_user, payload.new_password.strip())
+    new_token = create_admin_token(new_user)
+    return {
+        "success": True,
+        "username": new_user,
+        "token": new_token,
+        "message": "Credentials updated successfully.",
+    }
 
 
 class ManualAttendanceRequest(BaseModel):
@@ -1204,27 +1629,8 @@ def api_manual_attendance(payload: ManualAttendanceRequest):
 
 @app.get("/api/attendance")
 def api_attendance():
-    """Raw attendance.csv rows (Name, Timestamp, Type) for the Analytics and
-    DTR pages. Aggregation (per-day, per-person, IN/OUT pairing) happens
-    client-side since the log is small; this just hands back parsed rows,
-    oldest first. Rows written before the Type column existed only have 2
-    columns — treated as "IN" (every row logged under the old system was an
-    arrival)."""
-    if not os.path.isfile(ATTENDANCE_CSV):
-        return {"records": []}
-
-    records = []
-    with open(ATTENDANCE_CSV, newline="", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        next(reader, None)  # header row
-        for row in reader:
-            if len(row) >= 2:
-                records.append({
-                    "name": row[0],
-                    "timestamp": row[1],
-                    "type": row[2] if len(row) >= 3 and row[2] in ("IN", "OUT") else "IN",
-                })
-    return {"records": records}
+    """Raw attendance records from SQLite database."""
+    return {"records": get_all_attendance_records()}
 
 
 @app.get("/api/cameras")
@@ -1332,7 +1738,24 @@ async def api_camera_resume():
 # frontend hasn't been built yet (npm run build in frontend/), so the
 # backend still starts standalone during development.
 if os.path.isdir(FRONTEND_DIST):
-    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+    assets_dir = os.path.join(FRONTEND_DIST, "assets")
+    if os.path.isdir(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="static_assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa_app(full_path: str):
+        """Catch-all route that serves index.html for SPA routes like /kiosk, /dtr, etc."""
+        # 1. Exact static file inside dist/ (e.g. favicon.ico, logo.png)
+        target_path = os.path.join(FRONTEND_DIST, full_path)
+        if full_path and os.path.isfile(target_path):
+            return FileResponse(target_path)
+
+        # 2. SPA fallback to index.html
+        index_path = os.path.join(FRONTEND_DIST, "index.html")
+        if os.path.isfile(index_path):
+            return FileResponse(index_path)
+
+        raise HTTPException(status_code=404, detail="Page not found")
 else:
     @app.get("/")
     def frontend_not_built():

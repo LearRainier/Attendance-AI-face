@@ -29,6 +29,7 @@ Both gates are pure geometry on top of the detector, so they cost nothing
 per frame beyond the detection that was happening anyway.
 """
 
+from typing import Any
 import logging
 import os
 import threading
@@ -203,30 +204,28 @@ class FaceDetector:
             self._input_size = None
         return self._model
 
-    def detect(self, frame_bgr):
+    def detect(self, frame_bgr, return_landmarks=False) -> Any:
         """Detect faces in a BGR frame and split them by range.
 
         Parameters
         ----------
         frame_bgr : numpy.ndarray
             Full BGR frame.
+        return_landmarks : bool, optional
+            If True, returns (faces, landmarks_list, out_of_range).
+            If False, returns (faces, out_of_range).
 
         Returns
         -------
-        tuple[list[tuple[int, int, int, int]], list[dict]]
-            ``(faces, out_of_range)``. ``faces`` are in-range, face-shaped
-            detections as ``(x, y, w, h)`` in frame pixels — the only thing
-            that should ever be handed to the tracker. ``out_of_range`` holds
-            ``{"bbox": [x, y, w, h], "reason": "too_far" | "too_close"}`` for
-            real faces that failed only the distance gate, so the UI can tell
-            the person to step closer instead of appearing broken.
+        tuple
+            Either (faces, out_of_range) or (faces, landmarks_list, out_of_range).
         """
         if frame_bgr is None or frame_bgr.size == 0:
-            return [], []
+            return ([], [], []) if return_landmarks else ([], [])
 
         height, width = frame_bgr.shape[:2]
         if width == 0 or height == 0:
-            return [], []
+            return ([], [], []) if return_landmarks else ([], [])
 
         scale = min(1.0, DETECTOR_MAX_WIDTH / float(width))
         if scale < 1.0:
@@ -243,12 +242,13 @@ class FaceDetector:
             _, raw = model.detect(small)
 
         if raw is None:
-            return [], []
+            return ([], [], []) if return_landmarks else ([], [])
 
         min_width = max(self.min_width_ratio * width, self.min_width_pixels)
         max_width = self.max_width_ratio * width
 
         faces = []
+        landmarks_list = []
         out_of_range = []
 
         for row in raw:
@@ -287,5 +287,8 @@ class FaceDetector:
                 continue
 
             faces.append(box)
+            landmarks_list.append(landmarks)
 
+        if return_landmarks:
+            return faces, landmarks_list, out_of_range
         return faces, out_of_range

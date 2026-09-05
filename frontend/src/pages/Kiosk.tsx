@@ -1,0 +1,194 @@
+import { useEffect, useState } from "react";
+import { CheckCircle2, Clock, ScanFace, ShieldCheck, Wifi, WifiOff } from "lucide-react";
+
+import { useLiveFeed } from "@/hooks/useLiveFeed";
+import { VideoStage } from "@/components/VideoStage";
+import { Toast } from "@/components/Toast";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+
+function initials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]!.toUpperCase())
+    .join("");
+}
+
+export function Kiosk() {
+  const { state, connected } = useLiveFeed({ includeFrames: true });
+  const [currentTime, setCurrentTime] = useState<string>("");
+  const [currentDate, setCurrentDate] = useState<string>("");
+
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setCurrentTime(
+        now.toLocaleTimeString(undefined, {
+          hour: "numeric",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: true,
+        })
+      );
+      setCurrentDate(
+        now.toLocaleDateString(undefined, {
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+        })
+      );
+    };
+
+    updateTime();
+    const timer = setInterval(updateTime, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="flex min-h-screen w-full flex-col bg-background text-foreground">
+      {/* Top Kiosk Header */}
+      <header className="flex h-16 shrink-0 items-center justify-between border-b px-6 bg-card/60 backdrop-blur-sm">
+        <div className="flex items-center gap-3">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <ScanFace className="size-5" />
+          </div>
+          <div>
+            <h1 className="text-base font-semibold leading-tight">MG Attendance Kiosk</h1>
+            <p className="text-xs text-muted-foreground">Contactless Facial Recognition Check-In</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="text-right">
+            <div className="text-sm font-semibold tracking-wide font-mono">{currentTime}</div>
+            <div className="text-[11px] text-muted-foreground">{currentDate}</div>
+          </div>
+
+          <Badge variant={connected ? "default" : "outline"} className="gap-1.5 py-1 px-2.5">
+            {connected ? <Wifi className="size-3.5 text-success" /> : <WifiOff className="size-3.5 text-destructive" />}
+            {connected ? "System Online" : "Connecting..."}
+          </Badge>
+
+          <a
+            href="/"
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-background/80 hover:bg-accent px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors shadow-xs"
+            title="Go to Admin Dashboard"
+          >
+            <ShieldCheck className="size-3.5 text-primary" />
+            <span>Admin Portal</span>
+          </a>
+        </div>
+      </header>
+
+      {/* Main Kiosk Layout */}
+      <main className="flex flex-1 flex-col lg:flex-row gap-6 p-6 max-w-7xl mx-auto w-full">
+        {/* Left Column: Video Stage & Scanner */}
+        <div className="flex flex-1 flex-col gap-4">
+          <div className="relative overflow-hidden rounded-xl border border-border bg-black shadow-sm flex-1 min-h-[480px] w-full flex flex-col">
+            <VideoStage
+              frame={state.frame}
+              tracks={state.tracks}
+              hints={state.hints}
+              sourceSize={
+                state.frame_width && state.frame_height
+                  ? { width: state.frame_width, height: state.frame_height }
+                  : null
+              }
+              connected={connected}
+              error={state.camera_error}
+            />
+
+            <Toast toast={state.toast} />
+          </div>
+
+          <div className="flex items-center justify-between px-2 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <ShieldCheck className="size-4 text-primary" /> Active Liveness Detection Enabled
+            </span>
+            <span>{state.registered_count} Enrolled Students</span>
+          </div>
+        </div>
+
+        {/* Right Column: Instructions & Live Feed of Recent Check-ins */}
+        <div className="w-full lg:w-84 flex flex-col gap-5">
+          {/* Instructions Card */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium">How to Check In</CardTitle>
+              <CardDescription className="text-xs">Follow the onscreen prompts</CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2.5 text-xs text-muted-foreground">
+              <div className="flex items-start gap-2.5">
+                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+                  1
+                </span>
+                <span>Stand within 1 meter and look directly at the camera.</span>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+                  2
+                </span>
+                <span>When prompted, perform the gesture (Smile or Turn Head).</span>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+                  3
+                </span>
+                <span>Wait for the green confirmation banner.</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Recent Check-Ins Card */}
+          <Card className="flex-1 flex flex-col">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Clock className="size-4 text-primary" /> Today&apos;s Check-ins
+                </CardTitle>
+                <Badge variant="outline" className="text-[10px] font-mono">
+                  {state.recent_checkins.length}
+                </Badge>
+              </div>
+              <CardDescription className="text-xs">Live activity at this station</CardDescription>
+            </CardHeader>
+            <CardContent className="flex-1 overflow-y-auto">
+              {state.recent_checkins.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-center text-xs text-muted-foreground">
+                  <Clock className="size-6 opacity-40 mb-1.5" />
+                  <span>No check-ins yet today.</span>
+                </div>
+              ) : (
+                <ul className="flex flex-col gap-2.5">
+                  {state.recent_checkins.map(([name, time], idx) => (
+                    <li
+                      key={`${name}-${time}-${idx}`}
+                      className="flex items-center justify-between rounded-lg border border-border/50 bg-card/40 p-2.5"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <Avatar className="size-7 shrink-0 text-xs">
+                          <AvatarFallback className="bg-primary/10 text-primary text-[11px]">
+                            {initials(name)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="text-xs font-medium truncate">{name}</span>
+                      </div>
+                      <div className="flex items-center gap-1 text-[11px] text-muted-foreground shrink-0 font-mono">
+                        <CheckCircle2 className="size-3 text-success" />
+                        {time}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+    </div>
+  );
+}

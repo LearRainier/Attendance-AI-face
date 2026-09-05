@@ -32,6 +32,7 @@ const EMPTY_FORM: UserProfileInput = {
   phone: "",
   department: "",
   position: "",
+  student_number: "",
   employee_id: "",
   notes: "",
 };
@@ -69,7 +70,7 @@ export function Users() {
     const needle = search.trim().toLowerCase();
     if (!needle) return rows;
     return rows.filter((u) =>
-      [u.name, u.email, u.phone, u.department, u.position, u.employee_id]
+      [u.name, u.email, u.phone, u.student_number, u.employee_id]
         .some((field) => field?.toLowerCase().includes(needle))
     );
   }, [users, search]);
@@ -91,13 +92,15 @@ export function Users() {
 
   const openEdit = (user: UserProfile) => {
     setEditingName(user.name);
+    const studentNum = user.student_number || user.employee_id || "";
     setForm({
       name: user.name,
       email: user.email,
       phone: user.phone,
       department: user.department,
       position: user.position,
-      employee_id: user.employee_id,
+      student_number: studentNum,
+      employee_id: studentNum,
       notes: user.notes,
     });
     setFormError(null);
@@ -161,7 +164,6 @@ export function Users() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">User Management</h1>
-          <p className="text-sm text-muted-foreground">Personal details for everyone enrolled in attendance</p>
         </div>
         <Button onClick={openCreate}>
           <Plus className="size-4" />
@@ -209,7 +211,7 @@ export function Users() {
                 <Input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search name, email, department…"
+                  placeholder="Search name, student no., email…"
                   className="pl-8"
                 />
               </div>
@@ -221,8 +223,7 @@ export function Users() {
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Contact</TableHead>
-                      <TableHead>Department / Role</TableHead>
-                      <TableHead>Employee ID</TableHead>
+                      <TableHead>Student No.</TableHead>
                       <TableHead>Face</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
@@ -241,17 +242,9 @@ export function Users() {
                             "—"
                           )}
                         </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {u.department || u.position ? (
-                            <div className="flex flex-col text-xs">
-                              {u.position && <span className="text-foreground">{u.position}</span>}
-                              {u.department && <span>{u.department}</span>}
-                            </div>
-                          ) : (
-                            "—"
-                          )}
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {u.student_number || u.employee_id || "—"}
                         </TableCell>
-                        <TableCell className="text-muted-foreground">{u.employee_id || "—"}</TableCell>
                         <TableCell>
                           {u.template_count > 0 ? (
                             <Badge variant="success">{u.template_count} template{u.template_count === 1 ? "" : "s"}</Badge>
@@ -297,10 +290,8 @@ export function Users() {
               <IdCard className="size-4.5" />
               {editingName ? `Edit ${editingName}` : "Add a person"}
             </SheetTitle>
-            <SheetDescription>
-              {editingName
-                ? "Update personal details. This doesn't change their registered face templates."
-                : "Personal details are stored separately from face templates — add them either before or after registering a face on the Register page."}
+            <SheetDescription className="sr-only">
+              Personal profile editor
             </SheetDescription>
           </SheetHeader>
 
@@ -314,11 +305,6 @@ export function Users() {
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 placeholder="e.g. Jordan Lee"
               />
-              {editingName && (
-                <p className="text-xs text-muted-foreground">
-                  Name is linked to their registered face templates and can&apos;t be changed here.
-                </p>
-              )}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -382,34 +368,16 @@ export function Users() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="user-department">Department</Label>
-                <Input
-                  id="user-department"
-                  value={form.department}
-                  onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}
-                  placeholder="Engineering"
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="user-position">Position</Label>
-                <Input
-                  id="user-position"
-                  value={form.position}
-                  onChange={(e) => setForm((f) => ({ ...f, position: e.target.value }))}
-                  placeholder="Software Engineer"
-                />
-              </div>
-            </div>
-
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="user-employee-id">Employee ID</Label>
+              <Label htmlFor="user-student-no">Student No.</Label>
               <Input
-                id="user-employee-id"
-                value={form.employee_id}
-                onChange={(e) => setForm((f) => ({ ...f, employee_id: e.target.value }))}
-                placeholder="EMP-0042"
+                id="user-student-no"
+                value={form.student_number || form.employee_id || ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setForm((f) => ({ ...f, student_number: val, employee_id: val }));
+                }}
+                placeholder="e.g. 24-12345"
               />
             </div>
 
