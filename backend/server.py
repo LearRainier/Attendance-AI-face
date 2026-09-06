@@ -133,8 +133,8 @@ SOURCE_LOCAL = "local"
 SOURCE_BROWSER = "browser"
 INGEST_FRAME_TIMEOUT = 3.0   # no pushed frame for this long = stream stalled
 INGEST_MAX_FRAME_BYTES = 4_000_000  # reject absurd uploads before decoding
-FRAME_JPEG_QUALITY = 80
-STATE_BROADCAST_INTERVAL = 1 / 30  # ~30fps to connected WebSocket clients
+FRAME_JPEG_QUALITY = 65
+STATE_BROADCAST_INTERVAL = 1 / 25  # ~25fps to connected WebSocket clients (smooth and bandwidth-efficient)
 FIRST_SCAN_DELAY_SECONDS = 1.5     # hold a track before its first recognition attempt
 RETRY_COOLDOWN_SECONDS = 5.0       # retry Unknown/Error/No-Face tracks this often
 UNKNOWN_SNAPSHOT_COOLDOWN_SECONDS = 20.0
@@ -816,6 +816,14 @@ def camera_loop():
             if frame is None:
                 time.sleep(0.03)
                 continue
+
+            # Force maximum 720p resolution (1280x720) preserving aspect ratio
+            h, w = frame.shape[:2]
+            if w > 1280 or h > 720:
+                scale = min(1280.0 / w, 720.0 / h)
+                new_w = max(1, int(w * scale))
+                new_h = max(1, int(h * scale))
+                frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
             fps_frame_count += 1
             elapsed = time.time() - fps_timer

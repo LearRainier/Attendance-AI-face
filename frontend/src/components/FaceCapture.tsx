@@ -153,7 +153,10 @@ export function FaceCapture({
         // recognition accuracy, and this capture only ever produces a handful
         // of still frames, so the extra bandwidth costs nothing.
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+          video: {
+            width: { ideal: 1280, max: 1280 },
+            height: { ideal: 720, max: 720 },
+          },
           audio: false,
         });
         if (cancelled) {
