@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, CheckCircle2, Clock, LogIn, ScanFace, Users, Wifi, WifiOff, XCircle } from "lucide-react";
+import { Activity, CheckCircle2, Clock, LogIn, MonitorPlay, ScanFace, Users, Wifi, WifiOff, XCircle } from "lucide-react";
 
 import { fetchStatus, logManualAttendance } from "@/api";
 import { useLiveFeed } from "@/hooks/useLiveFeed";
@@ -27,7 +27,11 @@ function initials(name: string) {
     .join("");
 }
 
-export function Dashboard() {
+interface DashboardProps {
+  onEnterKiosk?: () => void;
+}
+
+export function Dashboard({ onEnterKiosk }: DashboardProps = {}) {
   // On a phone or tablet the backend's webcam is on some other machine
   // entirely, so this device's own camera is the sensible default source —
   // that's the whole point of opening the dashboard on a phone.
@@ -103,19 +107,32 @@ export function Dashboard() {
           <h1 className="text-2xl font-semibold tracking-tight">Live Dashboard</h1>
           <p className="text-sm text-muted-foreground">Real-time recognition feed and attendance activity</p>
         </div>
-        <Badge variant={connected ? "success" : "secondary"} className="gap-1.5 py-1">
-          {connected ? (
-            <>
-              <span className="size-1.5 animate-live-pulse rounded-full bg-success-foreground" />
-              Live
-            </>
-          ) : (
-            <>
-              <WifiOff className="size-3" />
-              Connecting…
-            </>
+        <div className="flex items-center gap-3">
+          <Badge variant={connected ? "success" : "secondary"} className="gap-1.5 py-1">
+            {connected ? (
+              <>
+                <span className="size-1.5 animate-live-pulse rounded-full bg-success-foreground" />
+                Live
+              </>
+            ) : (
+              <>
+                <WifiOff className="size-3" />
+                Connecting…
+              </>
+            )}
+          </Badge>
+
+          {onEnterKiosk && (
+            <Button
+              onClick={onEnterKiosk}
+              size="sm"
+              className="gap-1.5 cursor-pointer font-medium shadow-xs"
+            >
+              <MonitorPlay className="size-4" />
+              Launch Kiosk
+            </Button>
           )}
-        </Badge>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

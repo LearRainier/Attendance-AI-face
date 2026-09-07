@@ -15,7 +15,7 @@ export function KpiCard({ label, value, icon: Icon }: KpiCardProps) {
         <CardDescription>{label}</CardDescription>
         <Icon className="size-4 text-muted-foreground" />
       </CardHeader>
-      <CardContent className="px-5">
+      <CardContent className="px-5 pb-0">
         <span className="text-2xl font-semibold tracking-tight">{value}</span>
       </CardContent>
     </Card>

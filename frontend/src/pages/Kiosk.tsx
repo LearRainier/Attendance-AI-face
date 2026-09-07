@@ -5,6 +5,7 @@ import { useLiveFeed } from "@/hooks/useLiveFeed";
 import { VideoStage } from "@/components/VideoStage";
 import { Toast } from "@/components/Toast";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
@@ -17,7 +18,11 @@ function initials(name: string) {
     .join("");
 }
 
-export function Kiosk() {
+interface KioskProps {
+  onExitKiosk?: () => void;
+}
+
+export function Kiosk({ onExitKiosk }: KioskProps = {}) {
   const { state, connected } = useLiveFeed({ includeFrames: true });
   const [currentTime, setCurrentTime] = useState<string>("");
   const [currentDate, setCurrentDate] = useState<string>("");
@@ -51,7 +56,7 @@ export function Kiosk() {
   return (
     <div className="flex min-h-screen w-full flex-col bg-background text-foreground">
       {/* Top Kiosk Header */}
-      <header className="flex h-16 shrink-0 items-center justify-between border-b px-6 bg-card/60 backdrop-blur-sm">
+      <header className="flex min-h-16 shrink-0 flex-wrap items-center justify-between gap-3 border-b px-4 sm:px-6 py-2.5 bg-card/60 backdrop-blur-sm">
         <div className="flex items-center gap-3">
           <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <ScanFace className="size-5" />
@@ -62,25 +67,33 @@ export function Kiosk() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="text-right">
+        <div className="flex items-center gap-3 sm:gap-4 ml-auto">
+          <div className="text-right hidden sm:block">
             <div className="text-sm font-semibold tracking-wide font-mono">{currentTime}</div>
             <div className="text-[11px] text-muted-foreground">{currentDate}</div>
           </div>
 
           <Badge variant={connected ? "default" : "outline"} className="gap-1.5 py-1 px-2.5">
             {connected ? <Wifi className="size-3.5 text-success" /> : <WifiOff className="size-3.5 text-destructive" />}
-            {connected ? "System Online" : "Connecting..."}
+            <span className="hidden xs:inline">{connected ? "System Online" : "Connecting..."}</span>
           </Badge>
 
-          <a
-            href="/"
-            className="flex items-center gap-1.5 rounded-lg border border-border bg-background/80 hover:bg-accent px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors shadow-xs"
-            title="Go to Admin Dashboard"
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              if (onExitKiosk) {
+                onExitKiosk();
+              } else {
+                window.location.href = "/";
+              }
+            }}
+            className="shrink-0 gap-2 border-primary/30 bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground font-medium shadow-xs cursor-pointer"
+            title="Enter Admin Portal"
           >
-            <ShieldCheck className="size-3.5 text-primary" />
-            <span>Admin Portal</span>
-          </a>
+            <ShieldCheck className="size-4" />
+            <span>Enter Admin Portal</span>
+          </Button>
         </div>
       </header>
 
