@@ -11,10 +11,13 @@ export interface StatusResponse {
   people: { name: string; template_count: number }[];
 }
 
+export type AttendanceStatus = "ON_TIME" | "LATE";
+
 export interface AttendanceRecord {
   name: string;
   timestamp: string; // "YYYY-MM-DD HH:MM:SS"
   type: "IN" | "OUT";
+  status?: AttendanceStatus;
 }
 
 export interface DetectResponse {
@@ -124,7 +127,7 @@ export async function fetchAttendance(): Promise<AttendanceRecord[]> {
 export async function logManualAttendance(
   name: string,
   eventType: "IN" | "OUT"
-): Promise<{ name: string; type: "IN" | "OUT"; timestamp: string }> {
+): Promise<{ name: string; type: "IN" | "OUT"; timestamp: string; status?: AttendanceStatus }> {
   const res = await fetch("/api/attendance/manual", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -135,6 +138,63 @@ export async function logManualAttendance(
     throw new Error(data.detail || "Failed to log attendance.");
   }
   return data;
+}
+
+export interface HeatmapDay {
+  date: string;
+  day: number;
+  weekday: string;
+  weekday_num: number;
+  attendees_count: number;
+  clean_count: number;
+  late_count: number;
+  attendance_rate: number;
+  attendee_names: string[];
+}
+
+export interface UserRankingItem {
+  name: string;
+  count: number;
+  lates: number;
+  clean: number;
+}
+
+export interface UserLateRankingItem {
+  name: string;
+  lates: number;
+  clean: number;
+  total: number;
+}
+
+export interface AnalyticsSummary {
+  period: "month" | "week";
+  filter_label: string;
+  start_date: string;
+  end_date: string;
+  registered_count: number;
+  total_sessions: number;
+  unique_active: number;
+  total_clean: number;
+  total_late: number;
+  punctuality_rate: number;
+  avg_daily_rate: number;
+  heatmap: HeatmapDay[];
+  top_most_logins: UserRankingItem[];
+  top_lowest_logins: UserRankingItem[];
+  top_most_lates: UserLateRankingItem[];
+}
+
+export async function fetchAnalyticsSummary(
+  period: "month" | "week" = "month",
+  value?: string
+): Promise<AnalyticsSummary> {
+  const params = new URLSearchParams({ period });
+  if (value) params.set("value", value);
+  const res = await fetch(`/api/analytics/summary?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error("Failed to load analytics summary.");
+  }
+  return (await res.json()) as AnalyticsSummary;
 }
 
 export async function fetchUsers(): Promise<UserProfile[]> {

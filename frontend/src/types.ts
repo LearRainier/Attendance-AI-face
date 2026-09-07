@@ -25,9 +25,12 @@ export interface RangeHint {
   reason: "too_far" | "too_close";
 }
 
+export type AttendanceStatus = "ON_TIME" | "LATE";
+
 export interface ToastState {
   name: string;
   start_time: number;
+  status?: AttendanceStatus;
 }
 
 export type RecentCheckin = [name: string, time: string];

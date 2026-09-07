@@ -1,26 +1,42 @@
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Clock } from "lucide-react";
 import type { ToastState } from "@/types";
+import { cn } from "@/lib/utils";
 
 interface ToastProps {
   toast: ToastState | null;
 }
 
-/** Slide-in/out check-in notification. Keying on start_time forces a fresh
- * mount (and re-triggers the animate-toast-slide animation) every time the
- * backend reports a new toast; the backend clears `toast` after 3s, at
- * which point this simply unmounts. */
+/** Slide-in/out check-in notification with status (Clean vs Late). */
 export function Toast({ toast }: ToastProps) {
   if (!toast) return null;
+
+  const isLate = toast.status === "LATE";
 
   return (
     <div
       key={toast.start_time}
-      className="animate-toast-slide absolute top-4 right-4 flex items-start gap-3 rounded-lg border border-success/40 bg-card px-4 py-3 shadow-lg"
+      className={cn(
+        "animate-toast-slide absolute top-4 right-4 flex items-start gap-3 rounded-lg border bg-card px-4 py-3 shadow-lg z-50",
+        isLate ? "border-warning/60 bg-warning/5" : "border-success/40"
+      )}
     >
-      <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" />
+      {isLate ? (
+        <Clock className="mt-0.5 size-5 shrink-0 text-warning" />
+      ) : (
+        <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" />
+      )}
       <div className="flex flex-col">
-        <span className="text-sm font-semibold">Thank you, {toast.name}!</span>
-        <span className="text-xs text-muted-foreground">Attendance logged successfully</span>
+        <span className="text-sm font-semibold">
+          {isLate ? `Welcome, ${toast.name}!` : `Thank you, ${toast.name}!`}
+        </span>
+        <span
+          className={cn(
+            "text-xs font-medium",
+            isLate ? "text-warning" : "text-muted-foreground"
+          )}
+        >
+          {isLate ? "Attendance logged (Late Check-in)" : "Attendance logged on time"}
+        </span>
       </div>
     </div>
   );

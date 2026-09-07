@@ -71,13 +71,24 @@ def init_db():
                 name TEXT NOT NULL COLLATE NOCASE,
                 timestamp TEXT NOT NULL,
                 event_type TEXT NOT NULL,
-                date TEXT NOT NULL
+                date TEXT NOT NULL,
+                status TEXT DEFAULT 'ON_TIME'
             );
 
             CREATE INDEX IF NOT EXISTS idx_attendance_name_date ON attendance(name, date);
             CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date);
             CREATE INDEX IF NOT EXISTS idx_attendance_timestamp ON attendance(timestamp);
         """)
+
+        # Migration: ensure status column exists if attendance table was already created
+        cursor = conn.execute("PRAGMA table_info(attendance)")
+        existing_cols = {row["name"] for row in cursor.fetchall()}
+        if "status" not in existing_cols:
+            conn.execute("ALTER TABLE attendance ADD COLUMN status TEXT DEFAULT 'ON_TIME'")
+            logger.info("Migrated attendance table: added 'status' column.")
+
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_attendance_status ON attendance(status);")
+
     logger.info("SQLite database initialized at: %s", DB_PATH)
 
 
@@ -255,7 +266,28 @@ def set_user_password(name: str, new_password: str) -> bool:
         return cur.rowcount > 0
 
 
-def log_attendance_db(name: str, event_type: str = "IN", timestamp_str: Optional[str] = None) -> bool:
+def _infer_attendance_status(ts_str: str) -> str:
+    """Infer attendance status from timestamp if column was previously null."""
+    try:
+        from datetime import datetime
+        dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+        # Rule not applied on Saturdays (weekday 5)
+        if dt.weekday() == 5:
+            return "ON_TIME"
+        sec = dt.hour * 3600 + dt.minute * 60 + dt.second
+        if sec < 18900:  # before 05:15:00
+            return "ON_TIME"
+        return "LATE"
+    except Exception:
+        return "ON_TIME"
+
+
+def log_attendance_db(
+    name: str,
+    event_type: str = "IN",
+    timestamp_str: Optional[str] = None,
+    status: str = "ON_TIME",
+) -> bool:
     """Log an attendance event to SQLite."""
     from src.utils import sanitize_name, get_pht_now
     clean_name = sanitize_name(name)
@@ -269,9 +301,9 @@ def log_attendance_db(name: str, event_type: str = "IN", timestamp_str: Optional
     init_db()
     with get_db() as conn:
         conn.execute("""
-            INSERT INTO attendance (name, timestamp, event_type, date)
-            VALUES (?, ?, ?, ?)
-        """, (clean_name, ts, event_type, date_str))
+            INSERT INTO attendance (name, timestamp, event_type, date, status)
+            VALUES (?, ?, ?, ?, ?)
+        """, (clean_name, ts, event_type, date_str, status))
     return True
 
 
@@ -305,10 +337,10 @@ def find_todays_event_db(name: str, date_str: str, event_type: str) -> Optional[
 
 
 def get_all_attendance_records(name: Optional[str] = None, month: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Return attendance records from SQLite."""
+    """Return attendance records from SQLite with status."""
     init_db()
     with get_db() as conn:
-        query = "SELECT name, timestamp, event_type FROM attendance"
+        query = "SELECT name, timestamp, event_type, status FROM attendance"
         params = []
         conditions = []
 
@@ -324,7 +356,15 @@ def get_all_attendance_records(name: Optional[str] = None, month: Optional[str] 
         query += " ORDER BY timestamp ASC"
 
         rows = conn.execute(query, params).fetchall()
-        return [{"name": r["name"], "timestamp": r["timestamp"], "type": r["event_type"]} for r in rows]
+        return [
+            {
+                "name": r["name"],
+                "timestamp": r["timestamp"],
+                "type": r["event_type"],
+                "status": r["status"] or _infer_attendance_status(r["timestamp"]),
+            }
+            for r in rows
+        ]
 
 
 def wipe_db():

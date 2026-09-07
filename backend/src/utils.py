@@ -551,47 +551,48 @@ def crop_face_with_padding(frame, bbox, padding_percentage=0.25):
     return frame[y1:y2, x1:x2]
 
 
+def evaluate_checkin_time(pht_dt: datetime) -> Tuple[bool, str, str]:
+    """
+    Evaluates check-in time against daily attendance rules in Philippine Time.
+
+    Rules:
+    - Sundays (pht_dt.weekday() == 6): Attendance is not needed. No one shall be able to log on Sunday.
+    - Saturdays (pht_dt.weekday() == 5): Rule is NOT applied. Logins are accepted anytime as Clean/On-Time.
+    - Monday through Friday:
+      - Before 05:15:00: Clean ("ON_TIME")
+      - 05:15:00 up to 06:30:00 (inclusive): Late ("LATE")
+      - Beyond 06:30:00: Rejected ("REJECTED") - check-in closed.
+
+    Returns:
+        (allowed: bool, status: str, message: str)
+    """
+    # 1. Sunday rule: Attendance is not needed; logins are blocked
+    if pht_dt.weekday() == 6:
+        return False, "SUNDAY_CLOSED", "Attendance is not active on Sundays. Check-in closed."
+
+    # 2. Saturday exemption: rule is not observed on Saturdays
+    if pht_dt.weekday() == 5:
+        return True, "ON_TIME", "Logged IN (Saturday Schedule)"
+
+    # 3. Monday through Friday
+    sec_of_day = pht_dt.hour * 3600 + pht_dt.minute * 60 + pht_dt.second
+    LATE_START_SEC = 5 * 3600 + 15 * 60   # 05:15:00 = 18900
+    CUTOFF_SEC = 6 * 3600 + 30 * 60       # 06:30:00 = 23400
+
+    if sec_of_day > CUTOFF_SEC:
+        return False, "REJECTED", "Check-in closed. Attendance cutoff was 6:30 AM."
+    elif sec_of_day >= LATE_START_SEC:
+        return True, "LATE", "Logged IN (Late)"
+    else:
+        return True, "ON_TIME", "Logged IN (On Time)"
+
+
 def log_attendance(name, track_id=None, event_type="IN"):
     """
-    Append an attendance record to ``data/attendance.csv``.
+    Append an attendance record to SQLite and ``data/attendance.csv``.
 
-    Each row now carries an event ``Type`` — ``"IN"`` (a track's first
-    successful recognition) or ``"OUT"`` (logged by camera_loop when that
-    same track's face leaves frame — see the ``FaceTracker.update()``
-    removed-tracks return value). The DTR report pairs a day's earliest IN
-    with its latest OUT to compute hours rendered.
-
-    **IN** events use the existing per-track/per-name deduplication: each
-    track ID can only log once within a short cooldown, and the same name
-    can't log again within a longer cooldown (guards against tracking
-    flicker spawning a new track_id for someone already logged in). When a
-    face leaves the frame and comes back, the tracker assigns a *new* track
-    ID, so the return visit is treated as a fresh log entry.
-
-    **OUT** events skip that dedup entirely — they're only ever called once
-    per track, at the exact moment ``FaceTracker`` reports that track as
-    aged-out (removed), so there's no flicker to guard against and reusing
-    the IN-oriented per-name cooldown would just make a same-day OUT
-    immediately after an IN get silently dropped.
-
-    Records with names like ``"Unknown"``, ``"No Registered Faces"``,
-    ``"No Face Detected"``, ``"Error"``, or ``"Scanning..."`` are silently
-    skipped — only real person names are logged.
-
-    Parameters
-    ----------
-    name : str
-        The detected person's name.
-    track_id : int, optional
-        The tracker-assigned ID for this face appearance. Used for
-        per-track deduplication on IN events. If None, that check is skipped.
-    event_type : str
-        ``"IN"`` or ``"OUT"``.
-
-    Returns
-    -------
-    bool
-        True if the record was successfully logged, False if skipped or errored.
+    Returns:
+        Tuple[bool, str, str]: (success, status_or_reason, message)
     """
     # Skip non-person labels
     skip_labels = {
@@ -599,26 +600,33 @@ def log_attendance(name, track_id=None, event_type="IN"):
         "Error", "Scanning...", "Liveness Failed", "Spoof Detected",
     }
     if name in skip_labels:
-        return False
+        return False, "SKIPPED", "Non-person label"
 
     now = get_pht_now()
+    status = "ON_TIME"
+    status_msg = "Logged"
 
     if event_type == "IN":
         # Check settings for dev_mode (default False for single daily login)
         settings = load_settings()
         dev_mode = settings.get("dev_mode", DEV_MODE_DEFAULT)
 
-        if event_type == "IN":
-            today_str = now.strftime("%Y-%m-%d")
-            if has_logged_in_today_db(name, today_str):
-                logger.info("Skipping login for %s: already logged IN today (%s PHT).", name, today_str)
-                return False
+        today_str = now.strftime("%Y-%m-%d")
+        if not dev_mode and has_logged_in_today_db(name, today_str):
+            logger.info("Skipping login for %s: already logged IN today (%s PHT).", name, today_str)
+            return False, "ALREADY_LOGGED", f"{name} already logged in today."
+
+        # Evaluate late cutoff rules
+        allowed, status, status_msg = evaluate_checkin_time(now)
+        if not allowed:
+            logger.warning("Attendance rejected for %s: %s (%s PHT)", name, status_msg, now.strftime("%H:%M:%S"))
+            return False, status, status_msg
 
         # ---------- Per-track deduplication ----------
         if track_id is not None and track_id in _logged_tracks:
             elapsed = (now - _logged_tracks[track_id]).total_seconds()
             if elapsed < DEDUP_TRACK_COOLDOWN_SECONDS:
-                return False
+                return False, "COOLDOWN", "Track cooldown active"
 
         # Prune expired entries
         for tid in [t for t, ts in _logged_tracks.items()
@@ -631,7 +639,7 @@ def log_attendance(name, track_id=None, event_type="IN"):
     ts_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
     # 1. Log to SQLite database
-    log_attendance_db(name, event_type, ts_str)
+    log_attendance_db(name, event_type, ts_str, status=status)
 
     # 2. Also append to CSV as a backup / export file
     try:
@@ -639,8 +647,8 @@ def log_attendance(name, track_id=None, event_type="IN"):
         with open(ATTENDANCE_CSV, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if write_header:
-                writer.writerow(["Name", "Timestamp", "Type"])
-            writer.writerow([name, ts_str, event_type])
+                writer.writerow(["Name", "Timestamp", "Type", "Status"])
+            writer.writerow([name, ts_str, event_type, status])
     except Exception as e:
         logger.warning("Could not append to CSV backup: %s", e)
 
@@ -648,8 +656,8 @@ def log_attendance(name, track_id=None, event_type="IN"):
         if track_id is not None:
             _logged_tracks[track_id] = now
         _logged_names[name] = now
-    logger.info("Attendance logged to SQLite: %s %s at %s PHT", name, event_type, now.strftime("%H:%M:%S"))
-    return True
+    logger.info("Attendance logged to SQLite: %s %s (%s) at %s PHT", name, event_type, status, now.strftime("%H:%M:%S"))
+    return True, status, status_msg
 
 
 def _find_todays_event(name, date_str, event_type):
@@ -675,7 +683,7 @@ def has_logged_in_today(name: str) -> bool:
 
 
 def manual_time_event(name, event_type):
-    """Manually log time event to SQLite and CSV."""
+    """Manually log time event to SQLite and CSV with late/cutoff enforcement."""
     clean_name = sanitize_name(name)
     if not clean_name:
         raise ValueError("Name cannot be empty (or contained only invalid characters).")
@@ -694,21 +702,27 @@ def manual_time_event(name, event_type):
     if event_type == "OUT" and not find_todays_event_db(clean_name, today, "IN"):
         raise ValueError(f"{clean_name} hasn't timed in today yet — can't time out.")
 
+    status = "ON_TIME"
+    if event_type == "IN":
+        allowed, status, msg = evaluate_checkin_time(now)
+        if not allowed:
+            raise ValueError(msg)
+
     ts_str = now.strftime("%Y-%m-%d %H:%M:%S")
-    log_attendance_db(clean_name, event_type, ts_str)
+    log_attendance_db(clean_name, event_type, ts_str, status=status)
 
     try:
         write_header = not os.path.isfile(ATTENDANCE_CSV) or os.path.getsize(ATTENDANCE_CSV) == 0
         with open(ATTENDANCE_CSV, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if write_header:
-                writer.writerow(["Name", "Timestamp", "Type"])
-            writer.writerow([clean_name, ts_str, event_type])
+                writer.writerow(["Name", "Timestamp", "Type", "Status"])
+            writer.writerow([clean_name, ts_str, event_type, status])
     except Exception:
         pass
 
-    logger.info("Manual attendance logged to SQLite: %s %s at %s PHT", clean_name, event_type, now.strftime("%H:%M:%S"))
-    return ts_str
+    logger.info("Manual attendance logged to SQLite: %s %s (%s) at %s PHT", clean_name, event_type, status, now.strftime("%H:%M:%S"))
+    return ts_str, status
 
 
 def save_unknown_snapshot(frame):

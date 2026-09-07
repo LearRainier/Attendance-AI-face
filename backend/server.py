@@ -631,6 +631,7 @@ def camera_loop():
     last_source = None  # so a source change is handled once, not every tick
     toast_active = False
     toast_name = ""
+    toast_status = "ON_TIME"
     toast_start_time = 0.0
 
     fps = 0.0
@@ -879,19 +880,25 @@ def camera_loop():
                                 track.liveness_state = "passed"
                                 confirmed_name = track.candidate_name or track.label.split(" - ")[0]
                                 track.update_status(confirmed_name)
-                                logged = log_attendance(confirmed_name, track_id=track_id, event_type="IN")
+                                logged, att_status, att_msg = log_attendance(confirmed_name, track_id=track_id, event_type="IN")
                                 if logged:
                                     track.toast_triggered = False
                                     track.attendance_logged_in = True
+                                    track.attendance_status = att_status
                                     logger.info(
-                                        "Active liveness & anti-spoof passed for %s (%s). Check-in logged IN.",
-                                        confirmed_name, track.challenge
+                                        "Active liveness & anti-spoof passed for %s (%s). Check-in logged IN (%s).",
+                                        confirmed_name, track.challenge, att_status
                                     )
                                 else:
                                     track.attendance_logged_in = False
                                     track.toast_triggered = True
                                     track.liveness_state = "already_logged"
-                                    track.label = f"{confirmed_name} (Already Logged Today)"
+                                    if att_status == "SUNDAY_CLOSED":
+                                        track.label = f"{confirmed_name} (Closed on Sundays)"
+                                    elif att_status == "REJECTED":
+                                        track.label = f"{confirmed_name} (Closed: Past 6:30 AM)"
+                                    else:
+                                        track.label = f"{confirmed_name} (Already Logged Today)"
                         elif status == "failed":
                             track.liveness_state = "failed"
                             track.update_status("Liveness Failed")
@@ -919,6 +926,7 @@ def camera_loop():
                     if track.attendance_logged_in and not track.toast_triggered:
                         toast_active = True
                         toast_name = track.label
+                        toast_status = getattr(track, "attendance_status", "ON_TIME")
                         toast_start_time = time.time()
                         track.toast_triggered = True
 
@@ -965,7 +973,11 @@ def camera_loop():
                 state.frame_height = int(frame_h)
                 state.tracks = tracks_snapshot
                 state.hints = out_of_range
-                state.toast = {"name": toast_name, "start_time": toast_start_time} if toast_active else None
+                state.toast = {
+                    "name": toast_name,
+                    "status": toast_status,
+                    "start_time": toast_start_time,
+                } if toast_active else None
                 state.fps = fps
                 _refresh_broadcast_payload()
     finally:
@@ -1629,16 +1641,170 @@ def api_manual_attendance(payload: ManualAttendanceRequest):
     if payload.event_type not in ("IN", "OUT"):
         raise HTTPException(status_code=400, detail="event_type must be 'IN' or 'OUT'.")
     try:
-        timestamp = manual_time_event(payload.name, payload.event_type)
+        timestamp, status = manual_time_event(payload.name, payload.event_type)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"success": True, "name": payload.name, "type": payload.event_type, "timestamp": timestamp}
+    return {
+        "success": True,
+        "name": payload.name,
+        "type": payload.event_type,
+        "timestamp": timestamp,
+        "status": status,
+    }
 
 
 @app.get("/api/attendance")
 def api_attendance():
     """Raw attendance records from SQLite database."""
     return {"records": get_all_attendance_records()}
+
+
+@app.get("/api/analytics/summary")
+def api_analytics_summary(
+    period: str = Query("month", description="'month' or 'week'"),
+    value: Optional[str] = Query(None, description="Month 'YYYY-MM' or date 'YYYY-MM-DD'")
+):
+    """Return aggregated analytics data for month or week, including daily heatmap density,
+    top 15 logins, top 15 low logins (vs all registered users), top 15 lates, and punctuality stats."""
+    import calendar
+    from datetime import datetime, timedelta, date as dt_date
+    from src.db import load_user_profiles
+
+    users = load_user_profiles()
+    registered_names = sorted(list(users.keys()))
+    registered_count = len(registered_names)
+
+    now = get_pht_now()
+    if period == "week":
+        # Determine week start (Monday) and end (Sunday)
+        if value and "-W" in value:
+            year, week_num = value.split("-W")
+            first_day_of_year = dt_date(int(year), 1, 4)
+            start_date = first_day_of_year + timedelta(weeks=int(week_num) - 1)
+            start_date = start_date - timedelta(days=start_date.weekday())
+        elif value and len(value) == 10:
+            pivot = datetime.strptime(value, "%Y-%m-%d").date()
+            start_date = pivot - timedelta(days=pivot.weekday())
+        else:
+            pivot = now.date()
+            start_date = pivot - timedelta(days=pivot.weekday())
+        end_date = start_date + timedelta(days=6)
+        date_range = [start_date + timedelta(days=i) for i in range(7)]
+        filter_label = f"Week of {start_date.strftime('%b %d, %Y')} – {end_date.strftime('%b %d, %Y')}"
+    else:
+        # Month period
+        if not value or len(value) < 7:
+            month_str = now.strftime("%Y-%m")
+        else:
+            month_str = value[:7]
+        y, m = map(int, month_str.split("-"))
+        _, last_day = calendar.monthrange(y, m)
+        start_date = dt_date(y, m, 1)
+        end_date = dt_date(y, m, last_day)
+        date_range = [dt_date(y, m, d) for d in range(1, last_day + 1)]
+        filter_label = start_date.strftime("%B %Y")
+
+    all_records = get_all_attendance_records()
+    records_in_range = []
+    for r in all_records:
+        rec_date_str = r["timestamp"].split(" ")[0]
+        try:
+            rec_date = datetime.strptime(rec_date_str, "%Y-%m-%d").date()
+            if start_date <= rec_date <= end_date:
+                records_in_range.append(r)
+        except Exception:
+            continue
+
+    # 1. Daily Heatmap density
+    in_records = [r for r in records_in_range if r.get("type") == "IN"]
+    daily_map: Dict[str, List[Dict[str, Any]]] = {}
+    for r in in_records:
+        d_str = r["timestamp"].split(" ")[0]
+        daily_map.setdefault(d_str, []).append(r)
+
+    heatmap_days = []
+    total_clean_all = 0
+    total_late_all = 0
+
+    for d in date_range:
+        d_str = d.strftime("%Y-%m-%d")
+        day_recs = daily_map.get(d_str, [])
+        unique_users = set(r["name"] for r in day_recs)
+        clean_count = sum(1 for r in day_recs if r.get("status") == "ON_TIME")
+        late_count = sum(1 for r in day_recs if r.get("status") == "LATE")
+        total_clean_all += clean_count
+        total_late_all += late_count
+
+        attendee_count = len(unique_users)
+        rate = round((attendee_count / registered_count * 100), 1) if registered_count > 0 else 0.0
+
+        heatmap_days.append({
+            "date": d_str,
+            "day": d.day,
+            "weekday": d.strftime("%a"),
+            "weekday_num": d.weekday(),
+            "attendees_count": attendee_count,
+            "clean_count": clean_count,
+            "late_count": late_count,
+            "attendance_rate": rate,
+            "attendee_names": sorted(list(unique_users)),
+        })
+
+    # 2. User aggregations for rankings
+    user_logins: Dict[str, int] = {u: 0 for u in registered_names}
+    user_lates: Dict[str, int] = {u: 0 for u in registered_names}
+    user_clean: Dict[str, int] = {u: 0 for u in registered_names}
+
+    for r in in_records:
+        uname = r["name"]
+        user_logins[uname] = user_logins.get(uname, 0) + 1
+        if r.get("status") == "LATE":
+            user_lates[uname] = user_lates.get(uname, 0) + 1
+        else:
+            user_clean[uname] = user_clean.get(uname, 0) + 1
+
+    # Top 15 users with most logins
+    top_most_logins = [
+        {"name": u, "count": user_logins[u], "lates": user_lates[u], "clean": user_clean[u]}
+        for u in sorted(user_logins.keys(), key=lambda x: (-user_logins[x], x))
+    ][:15]
+
+    # Top 15 users with lowest logins (includes 0-login registered users)
+    top_lowest_logins = [
+        {"name": u, "count": user_logins[u], "lates": user_lates[u], "clean": user_clean[u]}
+        for u in sorted(user_logins.keys(), key=lambda x: (user_logins[x], x))
+    ][:15]
+
+    # Top 15 users with most lates
+    top_most_lates = [
+        {"name": u, "lates": user_lates[u], "clean": user_clean[u], "total": user_logins[u]}
+        for u in sorted(user_lates.keys(), key=lambda x: (-user_lates[x], -user_logins[x], x))
+        if user_lates[u] > 0
+    ][:15]
+
+    total_sessions = len(in_records)
+    unique_active = len(set(r["name"] for r in in_records))
+    active_days = [d for d in heatmap_days if d["attendees_count"] > 0]
+    avg_daily_rate = round(sum(d["attendance_rate"] for d in active_days) / len(active_days), 1) if active_days else 0.0
+    punctuality_rate = round((total_clean_all / total_sessions * 100), 1) if total_sessions > 0 else 100.0
+
+    return {
+        "period": period,
+        "filter_label": filter_label,
+        "start_date": start_date.strftime("%Y-%m-%d"),
+        "end_date": end_date.strftime("%Y-%m-%d"),
+        "registered_count": registered_count,
+        "total_sessions": total_sessions,
+        "unique_active": unique_active,
+        "total_clean": total_clean_all,
+        "total_late": total_late_all,
+        "punctuality_rate": punctuality_rate,
+        "avg_daily_rate": avg_daily_rate,
+        "heatmap": heatmap_days,
+        "top_most_logins": top_most_logins,
+        "top_lowest_logins": top_lowest_logins,
+        "top_most_lates": top_most_lates,
+    }
 
 
 @app.get("/api/cameras")

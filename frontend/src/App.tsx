@@ -64,7 +64,13 @@ function App() {
   }, [isKiosk]);
 
   const enterKiosk = () => {
-    window.open("/kiosk", "_blank");
+    window.history.pushState({}, "", "/kiosk");
+    setIsKiosk(true);
+  };
+
+  const exitKiosk = () => {
+    window.history.pushState({}, "", "/");
+    setIsKiosk(false);
   };
 
   const handleLoginSuccess = (username: string) => {
@@ -80,7 +86,7 @@ function App() {
 
   // Kiosk route is completely open and requires no admin login
   if (isKiosk) {
-    return <Kiosk />;
+    return <Kiosk onExitKiosk={exitKiosk} />;
   }
 
   // Loading state while verifying token
@@ -107,7 +113,7 @@ function App() {
       onLogout={handleLogout}
       onUsernameChange={setAdminUsername}
     >
-      {view === "dashboard" && <Dashboard />}
+      {view === "dashboard" && <Dashboard onEnterKiosk={enterKiosk} />}
       {view === "analytics" && <Analytics />}
       {view === "register" && <Register />}
       {view === "users" && <Users />}

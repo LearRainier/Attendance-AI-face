@@ -42,7 +42,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
     <div className="flex min-h-screen w-full items-center justify-center bg-background p-4">
       <div className="w-full max-w-md">
         <Card className="border-border/60 shadow-lg">
-          <CardHeader className="space-y-2 text-center pb-6">
+          <CardHeader className="space-y-2 text-center pb-0">
             <div className="mx-auto flex size-12 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
               <ScanFace className="size-6" />
             </div>
