@@ -108,19 +108,26 @@ export function Dashboard({ onEnterKiosk }: DashboardProps = {}) {
           <p className="text-sm text-muted-foreground">Real-time recognition feed and attendance activity</p>
         </div>
         <div className="flex items-center gap-3">
-          <Badge variant={connected ? "success" : "secondary"} className="gap-1.5 py-1">
-            {connected ? (
-              <>
-                <span className="size-1.5 animate-live-pulse rounded-full bg-success-foreground" />
-                Live
-              </>
-            ) : (
-              <>
-                <WifiOff className="size-3" />
-                Connecting…
-              </>
-            )}
-          </Badge>
+          {state.schedule_closed ? (
+            <Badge variant="outline" className="gap-1.5 py-1 border-amber-500/40 bg-amber-500/10 text-amber-400">
+              <Clock className="size-3" />
+              Closed
+            </Badge>
+          ) : (
+            <Badge variant={connected ? "success" : "secondary"} className="gap-1.5 py-1">
+              {connected ? (
+                <>
+                  <span className="size-1.5 animate-live-pulse rounded-full bg-success-foreground" />
+                  Live
+                </>
+              ) : (
+                <>
+                  <WifiOff className="size-3" />
+                  Connecting…
+                </>
+              )}
+            </Badge>
+          )}
 
           {onEnterKiosk && (
             <Button
@@ -196,6 +203,8 @@ export function Dashboard({ onEnterKiosk }: DashboardProps = {}) {
                       ? "This device's camera isn't available."
                       : null
               }
+              scheduleClosed={state.schedule_closed}
+              scheduleMessage={state.schedule_message}
             />
             <Toast toast={state.toast} />
           </div>
@@ -269,12 +278,18 @@ export function Dashboard({ onEnterKiosk }: DashboardProps = {}) {
                 <Button
                   className="w-full"
                   onClick={() => handleManualEvent("IN")}
-                  disabled={!selectedName || manualBusy !== null}
+                  disabled={!selectedName || manualBusy !== null || Boolean(state.schedule_closed)}
                 >
                   <LogIn className="size-4" />
                   {manualBusy === "IN" ? "Timing in…" : "Time In"}
                 </Button>
               </div>
+
+              {state.schedule_closed && (
+                <p className="text-xs text-amber-500/90 font-medium text-center">
+                  {state.schedule_message || "Check-in is currently closed."}
+                </p>
+              )}
 
               {manualMessage && (
                 <Alert variant="success">

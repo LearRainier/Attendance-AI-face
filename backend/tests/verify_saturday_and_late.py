@@ -18,7 +18,8 @@ times = [
     (5, 45, 0,  "05:45:00 AM (Mid-Late)"),
     (6, 30, 0,  "06:30:00 AM (Cutoff Limit)"),
     (6, 30, 1,  "06:30:01 AM (Past Cutoff)"),
-    (8, 0, 0,   "08:00:00 AM (Morning)"),
+    (8, 0, 0,   "08:00:00 AM (Morning Cutoff Limit)"),
+    (8, 0, 1,   "08:00:01 AM (Past Saturday Cutoff)"),
 ]
 
 print("| Day | Simulated Time | Accepted? | Status | Message |")

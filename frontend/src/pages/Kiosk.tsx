@@ -73,10 +73,17 @@ export function Kiosk({ onExitKiosk }: KioskProps = {}) {
             <div className="text-[11px] text-muted-foreground">{currentDate}</div>
           </div>
 
-          <Badge variant={connected ? "default" : "outline"} className="gap-1.5 py-1 px-2.5">
-            {connected ? <Wifi className="size-3.5 text-success" /> : <WifiOff className="size-3.5 text-destructive" />}
-            <span className="hidden xs:inline">{connected ? "System Online" : "Connecting..."}</span>
-          </Badge>
+          {state.schedule_closed ? (
+            <Badge variant="outline" className="gap-1.5 py-1 px-2.5 border-amber-500/40 bg-amber-500/10 text-amber-400">
+              <Clock className="size-3.5" />
+              <span>Check-in Closed</span>
+            </Badge>
+          ) : (
+            <Badge variant={connected ? "default" : "outline"} className="gap-1.5 py-1 px-2.5">
+              {connected ? <Wifi className="size-3.5 text-success" /> : <WifiOff className="size-3.5 text-destructive" />}
+              <span className="hidden xs:inline">{connected ? "System Online" : "Connecting..."}</span>
+            </Badge>
+          )}
 
           <Button
             variant="outline"
@@ -113,15 +120,23 @@ export function Kiosk({ onExitKiosk }: KioskProps = {}) {
               }
               connected={connected}
               error={state.camera_error}
+              scheduleClosed={state.schedule_closed}
+              scheduleMessage={state.schedule_message}
             />
 
             <Toast toast={state.toast} />
           </div>
 
           <div className="flex items-center justify-between px-2 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1.5">
-              <ShieldCheck className="size-4 text-primary" /> Active Liveness Detection Enabled
-            </span>
+            {state.schedule_closed ? (
+              <span className="flex items-center gap-1.5 text-amber-400/90 font-medium">
+                <Clock className="size-4 text-amber-400" /> Attendance Closed (Standby Mode)
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5">
+                <ShieldCheck className="size-4 text-primary" /> Active Liveness Detection Enabled
+              </span>
+            )}
             <span>{state.registered_count} Enrolled Students</span>
           </div>
         </div>

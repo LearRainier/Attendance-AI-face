@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CameraOff } from "lucide-react";
+import { CameraOff, Clock } from "lucide-react";
 
 import type { RangeHint, Track } from "@/types";
 import { TrackOverlay } from "@/components/TrackOverlay";
@@ -34,6 +34,10 @@ interface VideoStageProps {
    * the measured media size (correct for the backend's own webcam feed,
    * where the two are the same frame). */
   sourceSize?: { width: number; height: number } | null;
+  /** Whether check-in is currently closed based on daily schedule cutoff. */
+  scheduleClosed?: boolean;
+  /** Closed notice message to output when attendance cutoff is reached. */
+  scheduleMessage?: string | null;
 }
 
 interface Rect {
@@ -69,6 +73,8 @@ export function VideoStage({
   videoRef,
   statusMessage = null,
   sourceSize = null,
+  scheduleClosed = false,
+  scheduleMessage = null,
 }: VideoStageProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -108,6 +114,39 @@ export function VideoStage({
       setNatural({ width: 0, height: 0 });
     }
   }, [stream, videoRef]);
+
+  const isClosed = scheduleClosed || Boolean(scheduleMessage);
+
+  if (isClosed) {
+    const isSunday = scheduleMessage?.toLowerCase().includes("sunday");
+    const isSaturday = scheduleMessage?.toLowerCase().includes("8:00");
+    const reopeningInfo = isSunday
+      ? "Attendance is not active on Sundays. Resumes Monday at 2:00 AM."
+      : isSaturday
+      ? "Saturday check-in closed. Resumes Monday at 2:00 AM."
+      : "Camera is disabled. Attendance automatically reopens at 2:00 AM.";
+
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-zinc-950 p-8 text-center min-h-[360px] w-full">
+        <div className="flex size-16 items-center justify-center rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-500 shadow-lg shadow-amber-500/5">
+          <Clock className="size-8" />
+        </div>
+        <div className="space-y-1.5 max-w-md">
+          <h3 className="text-lg font-semibold tracking-tight text-white">Check-in Closed</h3>
+          <p className="text-sm font-medium text-amber-200/90 leading-relaxed">
+            {scheduleMessage || "login is currently closed as 6:30 AM has passed."}
+          </p>
+          <p className="text-xs text-neutral-400 mt-2">
+            {reopeningInfo}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-xs text-amber-400/90">
+          <span className="size-1.5 rounded-full bg-amber-400" />
+          <span>Camera Standby (Philippine Time)</span>
+        </div>
+      </div>
+    );
+  }
 
   const hasPicture = stream ? true : Boolean(frame);
 
