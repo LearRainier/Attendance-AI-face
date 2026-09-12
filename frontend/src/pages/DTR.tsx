@@ -5,6 +5,7 @@ import {
   Clock,
   Download,
   FileClock,
+  FileSpreadsheet,
   UserCheck,
 } from "lucide-react";
 
@@ -207,7 +208,33 @@ export function DTR() {
     return cells;
   }, [days, month]);
 
-  // Export PDF replacing CSV
+  // Export Handlers: PDF & CSV
+  const handleExportCsv = () => {
+    if (!selectedName || days.length === 0) return;
+    const header = "Date,Day,Time In,Status\n";
+    const rows = days.map((d) => {
+      const [yr, mo, dy] = d.date.split("-").map(Number);
+      const dow = new Date(yr, mo - 1, dy).toLocaleDateString("en-US", { weekday: "long" });
+      const timeStr = d.timeInTs ? timeLabel(d.timeInTs) : "—";
+      const statusStr = d.timeInTs
+        ? d.status === "LATE"
+          ? "Late Login"
+          : "Clean / On Time"
+        : dow === "Sunday"
+        ? "Sunday (Off)"
+        : "Absent";
+      return [d.date, dow, `"${timeStr}"`, `"${statusStr}"`].join(",");
+    });
+    const csvContent = header + rows.join("\n") + "\n";
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `DTR_${selectedName.replace(/[^a-zA-Z0-9_-]/g, "_")}_${month}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleExportPdf = async () => {
     if (!selectedName) return;
     setExporting(true);
@@ -234,17 +261,28 @@ export function DTR() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Daily Time Record</h1>
           <p className="text-sm text-muted-foreground">
-            Individual monthly attendance heatmap, activity tracking, and PDF export
+            Individual monthly attendance heatmap, activity tracking, and data export
           </p>
         </div>
-        <Button
-          onClick={handleExportPdf}
-          disabled={exporting || people.length === 0}
-          className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs"
-        >
-          <Download className="size-4" />
-          {exporting ? "Generating PDF…" : "Export PDF"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={handleExportCsv}
+            disabled={exporting || people.length === 0 || days.length === 0}
+            variant="outline"
+            className="gap-2 shadow-xs cursor-pointer"
+          >
+            <FileSpreadsheet className="size-4" />
+            Export CSV
+          </Button>
+          <Button
+            onClick={handleExportPdf}
+            disabled={exporting || people.length === 0}
+            className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs cursor-pointer"
+          >
+            <Download className="size-4" />
+            {exporting ? "Generating PDF…" : "Export PDF"}
+          </Button>
+        </div>
       </div>
 
       {error ? (
