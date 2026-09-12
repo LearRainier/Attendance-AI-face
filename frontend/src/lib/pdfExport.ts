@@ -2,16 +2,14 @@ import { jsPDF } from "jspdf";
 import type { AnalyticsSummary, UserProfile } from "@/api";
 
 // Strict Color Palette matching user guidelines:
-// - Red (accent for header banners & logo watermark)
-// - Black (for text, numbers, labels, lines, borders)
-// - White (for card backgrounds, page background, text on dark/red headers)
+// - Black (for headers, banners, text, numbers, labels, lines, borders)
+// - White (for card backgrounds, page background, text on dark headers)
 // - Green (Clean/On-Time logs on DTR, and gradient-green on monthly analytics heatmap)
 // - Yellow (Late logs on DTR)
 // - NO other colors
+// - Institutional logo watermark retains its original colors at 7% opacity
 const COLORS = {
-  accentRed: [185, 28, 28], // #b91c1c (SHC Crimson Red Header Accent)
-  accentRedDark: [153, 27, 27], // #991b1b
-  black: [17, 24, 39], // #111827 (Primary black for text, numbers, lines)
+  black: [17, 24, 39], // #111827 (Primary black for banners, headers, text, numbers, lines)
   textMuted: [107, 114, 128], // #6b7280 (Secondary black/gray for labels)
   border: [229, 231, 235], // #e5e7eb (Light border)
   borderDark: [156, 163, 175], // #9ca3af (Medium border)
@@ -120,8 +118,8 @@ export async function exportAnalyticsReportPdf(summary: AnalyticsSummary): Promi
   const margin = 14;
   const contentWidth = pageWidth - margin * 2;
 
-  // 1. Header Banner (Solid Crimson Red Accent with White Text)
-  doc.setFillColor(COLORS.accentRed[0], COLORS.accentRed[1], COLORS.accentRed[2]);
+  // 1. Header Banner (Solid Black with White Text)
+  doc.setFillColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
   doc.roundedRect(margin, 12, contentWidth, 28, 3, 3, "F");
 
   // Title & Subtitle
@@ -135,10 +133,10 @@ export async function exportAnalyticsReportPdf(summary: AnalyticsSummary): Promi
   doc.setTextColor(245, 245, 245);
   doc.text("Contactless Facial Recognition Attendance & Analytics Report", margin + 6, 28);
 
-  // Period Badge (White Box with Crimson Header and Black Label)
+  // Period Badge (White Box with Black Text)
   doc.setFillColor(COLORS.white[0], COLORS.white[1], COLORS.white[2]);
   doc.roundedRect(pageWidth - margin - 56, 18, 50, 16, 2, 2, "F");
-  doc.setTextColor(COLORS.accentRed[0], COLORS.accentRed[1], COLORS.accentRed[2]);
+  doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8.5);
   doc.text("FILTER PERIOD", pageWidth - margin - 51, 23.5);
@@ -182,11 +180,11 @@ export async function exportAnalyticsReportPdf(summary: AnalyticsSummary): Promi
 
   y += 28;
 
-  // 3. Attendance Density Heatmap (None-to-GradientGreen Rule)
+  // 3. Attendance Density Heatmap
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10.5);
   doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
-  doc.text("Attendance Density Heatmap (None-to-Gradient Green)", margin, y);
+  doc.text("Attendance Density Heatmap", margin, y);
 
   // Gradient Legend
   doc.setFont("helvetica", "normal");
@@ -208,8 +206,8 @@ export async function exportAnalyticsReportPdf(summary: AnalyticsSummary): Promi
   const cellSize = contentWidth / cols;
   const cellHeight = summary.period === "week" ? 14 : 10;
 
-  // Table header (Solid Red Accent with White Text)
-  doc.setFillColor(COLORS.accentRed[0], COLORS.accentRed[1], COLORS.accentRed[2]);
+  // Table header (Solid Black with White Text)
+  doc.setFillColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
   doc.roundedRect(margin, y, contentWidth, 6, 1.5, 1.5, "F");
   doc.setTextColor(COLORS.white[0], COLORS.white[1], COLORS.white[2]);
   doc.setFont("helvetica", "bold");
@@ -319,8 +317,8 @@ export async function exportAnalyticsReportPdf(summary: AnalyticsSummary): Promi
     rankBoxHeight,
     "Top 15 Most Logins",
     "Highest attendance in period",
-    COLORS.accentRed,
-    COLORS.accentRed,
+    COLORS.black,
+    COLORS.black,
     summary.top_most_logins.map((item, i) => ({
       rank: i + 1,
       name: item.name,
@@ -494,8 +492,8 @@ export async function exportIndividualDtrPdf({
   const monthName = monthDate.toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();
 
-  // 1. DTR Institutional Header (Solid Crimson Red Accent with White Text)
-  doc.setFillColor(COLORS.accentRed[0], COLORS.accentRed[1], COLORS.accentRed[2]);
+  // 1. DTR Institutional Header (Solid Black with White Text)
+  doc.setFillColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
   doc.roundedRect(margin, 12, contentWidth, 24, 3, 3, "F");
 
   doc.setTextColor(COLORS.white[0], COLORS.white[1], COLORS.white[2]);
@@ -508,10 +506,10 @@ export async function exportIndividualDtrPdf({
   doc.setTextColor(245, 245, 245);
   doc.text("Official Individual Monthly Attendance & Facial Recognition Log", margin + 6, 27);
 
-  // Month Tag (White Box with Red Accent Text)
+  // Month Tag (White Box with Black Text)
   doc.setFillColor(COLORS.white[0], COLORS.white[1], COLORS.white[2]);
   doc.roundedRect(pageWidth - margin - 52, 17, 46, 14, 2, 2, "F");
-  doc.setTextColor(COLORS.accentRed[0], COLORS.accentRed[1], COLORS.accentRed[2]);
+  doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
   doc.text(monthName.toUpperCase(), pageWidth - margin - 29, 25.5, { align: "center" });
@@ -647,8 +645,8 @@ export async function exportIndividualDtrPdf({
   const cellSize = contentWidth / cols;
   const cellHeight = 18;
 
-  // Weekday Header (Solid Crimson Red Accent with White Text)
-  doc.setFillColor(COLORS.accentRed[0], COLORS.accentRed[1], COLORS.accentRed[2]);
+  // Weekday Header (Solid Black with White Text)
+  doc.setFillColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
   doc.roundedRect(margin, y, contentWidth, 6, 1.5, 1.5, "F");
   doc.setTextColor(COLORS.white[0], COLORS.white[1], COLORS.white[2]);
   doc.setFont("helvetica", "bold");
@@ -806,7 +804,7 @@ export async function exportIndividualDtrPdf({
   doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
   doc.text("Verified & Approved", adminSigX + sigColW / 2, sigY + 7.5, { align: "center" });
 
-  // 6. Page Footer
+  // 6. Page 1 Footer
   doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2]);
   doc.line(margin, pageHeight - 12, pageWidth - margin, pageHeight - 12);
 
@@ -814,8 +812,203 @@ export async function exportIndividualDtrPdf({
   doc.setFontSize(7);
   doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
   doc.text(`Generated on ${formatPhtDate()} (PST/PHT) • SHC MG Face Attendance System`, margin, pageHeight - 8);
+  doc.text("Page 1 of 2 • Official System Export", pageWidth - margin, pageHeight - 8, { align: "right" });
 
-  // 7. Center Watermark (Low Opacity SHC Logo)
+  // 7. Page 1 Center Watermark (Low Opacity SHC Logo)
+  await renderLogoWatermark(doc, pageWidth, pageHeight);
+
+  // =========================================================================
+  // PAGE 2: ATTENDANCE LOG DETAIL (ITEMIZED TRANSACTION LEDGER)
+  // =========================================================================
+  doc.addPage();
+
+  // Header Banner (Solid Black with White Text)
+  doc.setFillColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+  doc.roundedRect(margin, 12, contentWidth, 20, 2.5, 2.5, "F");
+
+  doc.setTextColor(COLORS.white[0], COLORS.white[1], COLORS.white[2]);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.text("SHC MG — DAILY TIME RECORD (DTR)", margin + 6, 20);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(230, 230, 230);
+  doc.text(`Attendance Log Detail & Activity Ledger — ${monthName}`, margin + 6, 26.5);
+
+  // Month & User Tag (White Box with Black Text)
+  doc.setFillColor(COLORS.white[0], COLORS.white[1], COLORS.white[2]);
+  doc.roundedRect(pageWidth - margin - 58, 15.5, 52, 13, 2, 2, "F");
+  doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  const truncUserName = userName.length > 20 ? userName.substring(0, 18) + "…" : userName;
+  doc.text(truncUserName, pageWidth - margin - 54, 20.5);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6.5);
+  doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
+  doc.text(monthName.toUpperCase(), pageWidth - margin - 54, 25);
+
+  let p2Y = 36;
+
+  // Student Particulars Strip
+  doc.setFillColor(COLORS.cardBg[0], COLORS.cardBg[1], COLORS.cardBg[2]);
+  doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2]);
+  doc.roundedRect(margin, p2Y, contentWidth, 10, 1.5, 1.5, "FD");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(6.5);
+  doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
+  doc.text("STUDENT NO:", margin + 4, p2Y + 6.5);
+  doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+  doc.text(userProfile?.student_number || userProfile?.employee_id || "N/A", margin + 25, p2Y + 6.5);
+
+  doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
+  doc.text("COURSE:", margin + 62, p2Y + 6.5);
+  doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+  doc.text(userProfile?.department || "N/A", margin + 77, p2Y + 6.5);
+
+  doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
+  doc.text("ATTENDANCE:", margin + 120, p2Y + 6.5);
+  doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+  doc.text(`${presentCount} / ${requiredDays} (${ratePct}%)`, margin + 143, p2Y + 6.5);
+
+  p2Y += 13;
+
+  // Table Column Definitions (Total Width = 182mm)
+  const p2ColW = [10, 32, 28, 42, 38, 32];
+  const p2Headers = ["#", "Date", "Day", "Time In", "Punctuality", "Verification"];
+
+  doc.setFillColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+  doc.roundedRect(margin, p2Y, contentWidth, 5.5, 1, 1, "F");
+  doc.setTextColor(COLORS.white[0], COLORS.white[1], COLORS.white[2]);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(6.5);
+
+  let hX = margin;
+  p2Headers.forEach((hdr, idx) => {
+    const align = idx === 0 || idx === 4 || idx === 5 ? "center" : "left";
+    const pad = align === "center" ? p2ColW[idx] / 2 : 2.5;
+    doc.text(hdr, hX + pad, p2Y + 3.8, { align });
+    hX += p2ColW[idx];
+  });
+
+  p2Y += 6.5;
+
+  // Calendar Day Rows
+  const p2RowH = 6.2;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dStr = `${year}-${String(monthIdx + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const dateObj = new Date(year, monthIdx, d);
+    const dowIdx = dateObj.getDay();
+    const dowName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][dowIdx];
+    const isSun = dowIdx === 0;
+    const isSat = dowIdx === 6;
+    const rec = daysMap.get(dStr);
+    const hasLogin = !!(rec && rec.timeInTs);
+    const isLate = rec?.status === "LATE";
+
+    if (d % 2 === 0) {
+      doc.setFillColor(249, 250, 251);
+      doc.rect(margin, p2Y, contentWidth, p2RowH, "F");
+    }
+
+    doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2]);
+    doc.line(margin, p2Y + p2RowH, margin + contentWidth, p2Y + p2RowH);
+
+    let rX = margin;
+
+    // Col 0: #
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(6);
+    doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
+    doc.text(String(d), rX + p2ColW[0] / 2, p2Y + 4.2, { align: "center" });
+    rX += p2ColW[0];
+
+    // Col 1: Date
+    const dateFormatted = dateObj.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+    doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+    doc.text(dateFormatted, rX + 2.5, p2Y + 4.2);
+    rX += p2ColW[1];
+
+    // Col 2: Day
+    doc.setTextColor(isSun ? COLORS.textMuted[0] : COLORS.black[0], isSun ? COLORS.textMuted[1] : COLORS.black[1], isSun ? COLORS.textMuted[2] : COLORS.black[2]);
+    doc.text(dowName, rX + 2.5, p2Y + 4.2);
+    rX += p2ColW[2];
+
+    // Col 3: Time In
+    if (hasLogin && rec?.timeInTs) {
+      const timePart = rec.timeInTs.split(" ")[1] || "";
+      const [hh, mm] = timePart.split(":");
+      const hourNum = parseInt(hh, 10);
+      const ampm = hourNum >= 12 ? "PM" : "AM";
+      const h12 = hourNum % 12 || 12;
+      const timeFormatted = `${h12}:${mm} ${ampm}`;
+
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+      doc.text(timeFormatted, rX + 2.5, p2Y + 4.2);
+    } else {
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
+      doc.text("—", rX + 2.5, p2Y + 4.2);
+    }
+    rX += p2ColW[3];
+
+    // Col 4: Punctuality Status
+    if (hasLogin) {
+      if (isLate) {
+        doc.setFillColor(COLORS.yellowBg[0], COLORS.yellowBg[1], COLORS.yellowBg[2]);
+        doc.setDrawColor(COLORS.yellow[0], COLORS.yellow[1], COLORS.yellow[2]);
+        doc.roundedRect(rX + 3, p2Y + 1.1, p2ColW[4] - 6, 3.8, 0.6, 0.6, "FD");
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(5.5);
+        doc.setTextColor(COLORS.yellow[0], COLORS.yellow[1], COLORS.yellow[2]);
+        doc.text("LATE LOGIN", rX + p2ColW[4] / 2, p2Y + 3.8, { align: "center" });
+      } else {
+        doc.setFillColor(COLORS.greenBg[0], COLORS.greenBg[1], COLORS.greenBg[2]);
+        doc.setDrawColor(COLORS.green[0], COLORS.green[1], COLORS.green[2]);
+        doc.roundedRect(rX + 3, p2Y + 1.1, p2ColW[4] - 6, 3.8, 0.6, 0.6, "FD");
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(5.5);
+        doc.setTextColor(COLORS.green[0], COLORS.green[1], COLORS.green[2]);
+        doc.text(isSat ? "ON TIME (SAT)" : "CLEAN / ON TIME", rX + p2ColW[4] / 2, p2Y + 3.8, { align: "center" });
+      }
+    } else {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6);
+      doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
+      doc.text(isSun ? "Sunday (Off)" : "Absent", rX + p2ColW[4] / 2, p2Y + 4.2, { align: "center" });
+    }
+    rX += p2ColW[4];
+
+    // Col 5: Verification
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(5.5);
+    if (hasLogin) {
+      doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+      doc.text("Facial AI Verified", rX + p2ColW[5] / 2, p2Y + 4.2, { align: "center" });
+    } else {
+      doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
+      doc.text("—", rX + p2ColW[5] / 2, p2Y + 4.2, { align: "center" });
+    }
+
+    p2Y += p2RowH;
+  }
+
+  // Page 2 Footer
+  doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2]);
+  doc.line(margin, pageHeight - 12, pageWidth - margin, pageHeight - 12);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7);
+  doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
+  doc.text(`Generated on ${formatPhtDate()} (PST/PHT) • SHC MG Face Attendance System`, margin, pageHeight - 8);
+  doc.text("Page 2 of 2 • Official System Export", pageWidth - margin, pageHeight - 8, { align: "right" });
+
+  // Page 2 Center Logo Watermark
   await renderLogoWatermark(doc, pageWidth, pageHeight);
 
   const safeName = userName.replace(/[^a-zA-Z0-9_-]/g, "_");
