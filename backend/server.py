@@ -72,6 +72,7 @@ from src.utils import (
     set_user_password,
     _hash_password,
     sanitize_name,
+    is_camera_allowed,
     ATTENDANCE_CSV,
 )
 from src.db import init_db, get_all_attendance_records
@@ -195,6 +196,8 @@ class AppState:
         self.source_label: Optional[str] = None  # e.g. "iPhone · front camera", for the UI
         self.cameras: List[Any] = []
         self.camera_error: Optional[str] = None
+        self.schedule_closed: bool = False
+        self.schedule_message: Optional[str] = None
         # Pre-serialized JSON for /ws/live, rebuilt once per camera-loop
         # tick (see _refresh_broadcast_payload) rather than once per
         # connected client — see that function's docstring for why.
@@ -213,6 +216,8 @@ class AppState:
             "camera_error": None,
             "camera_source": SOURCE_LOCAL,
             "source_label": None,
+            "schedule_closed": False,
+            "schedule_message": None,
         })
         # Same snapshot minus the (by far largest) "frame" field, for clients
         # that supply the video themselves — a phone streaming its own camera
@@ -480,6 +485,8 @@ def _refresh_broadcast_payload():
         "camera_error": state.camera_error,
         "camera_source": state.camera_source,
         "source_label": state.source_label,
+        "schedule_closed": state.schedule_closed,
+        "schedule_message": state.schedule_message,
     }
     # The frameless variant first, then the same dict plus the frame — the
     # base64 encode still happens at most once per tick either way.
@@ -644,6 +651,44 @@ def camera_loop():
     try:
         while not _shutdown_event.is_set():
             frame: Any = None
+
+            # Check camera schedule (Philippine Time UTC+8)
+            now_pht = get_pht_now()
+            cam_allowed, schedule_msg = is_camera_allowed(now_pht)
+            if not cam_allowed:
+                if video_capture is not None:
+                    video_capture.release()
+                    video_capture = None
+                    open_index = None
+                    logger.info("Camera released due to schedule: %s", schedule_msg)
+
+                with tracks_lock:
+                    tracker.tracks.clear()
+
+                with state.lock:
+                    state.camera_active = False
+                    state.camera_held = False
+                    state.camera_open_index = None
+                    state.schedule_closed = True
+                    state.schedule_message = schedule_msg
+                    state.camera_error = schedule_msg
+                    _clear_live_state()
+                    _refresh_broadcast_payload()
+
+                time.sleep(1.0)
+                continue
+            else:
+                with state.lock:
+                    if state.schedule_closed:
+                        state.schedule_closed = False
+                        state.schedule_message = None
+                        if state.camera_error in (
+                            "login is currently closed as 6:30 AM has passed.",
+                            "login is currently closed as 8:00 AM has passed.",
+                            "login is currently closed. Attendance is not active on Sundays.",
+                        ):
+                            state.camera_error = None
+
             # Reasons to hand the local device back: registration (browser
             # getUserMedia needs exclusive access on some drivers, so the
             # Register page calls /api/camera/pause), a camera scan, which has
@@ -1172,6 +1217,15 @@ async def ws_ingest(websocket: WebSocket):
     await websocket.accept()
     label = websocket.query_params.get("label") or "browser device"
 
+    cam_allowed, sched_msg = is_camera_allowed(get_pht_now())
+    if not cam_allowed:
+        await websocket.send_text(json.dumps({
+            "ok": False,
+            "error": sched_msg or "Camera is currently closed.",
+        }))
+        await websocket.close()
+        return
+
     if not _frame_ingest.claim(websocket, label):
         await websocket.send_text(json.dumps({
             "ok": False,
@@ -1235,6 +1289,7 @@ class RegisterRequest(BaseModel):
     name: str
     student_number: str = ""
     email: str = ""
+    department: str = ""
     image_b64: str  # raw base64 or a data: URL from a <canvas>.toDataURL()
 
 
@@ -1296,6 +1351,7 @@ def api_register(payload: RegisterRequest):
         "student_number": student_num or existing_profile.get("student_number", ""),
         "employee_id": student_num or existing_profile.get("employee_id", ""),
         "email": email or existing_profile.get("email", ""),
+        "department": payload.department.strip() or existing_profile.get("department", ""),
         "account_id": student_num or clean_name,
         "salt": salt,
         "password_hash": pwd_hash,
@@ -1765,21 +1821,36 @@ def api_analytics_summary(
 
     # Top 15 users with most logins
     top_most_logins = [
-        {"name": u, "count": user_logins[u], "lates": user_lates[u], "clean": user_clean[u]}
-        for u in sorted(user_logins.keys(), key=lambda x: (-user_logins[x], x))
+        {
+            "name": u,
+            "count": user_logins.get(u, 0),
+            "lates": user_lates.get(u, 0),
+            "clean": user_clean.get(u, 0),
+        }
+        for u in sorted(user_logins.keys(), key=lambda x: (-user_logins.get(x, 0), x))
     ][:15]
 
     # Top 15 users with lowest logins (includes 0-login registered users)
     top_lowest_logins = [
-        {"name": u, "count": user_logins[u], "lates": user_lates[u], "clean": user_clean[u]}
-        for u in sorted(user_logins.keys(), key=lambda x: (user_logins[x], x))
+        {
+            "name": u,
+            "count": user_logins.get(u, 0),
+            "lates": user_lates.get(u, 0),
+            "clean": user_clean.get(u, 0),
+        }
+        for u in sorted(user_logins.keys(), key=lambda x: (user_logins.get(x, 0), x))
     ][:15]
 
     # Top 15 users with most lates
     top_most_lates = [
-        {"name": u, "lates": user_lates[u], "clean": user_clean[u], "total": user_logins[u]}
-        for u in sorted(user_lates.keys(), key=lambda x: (-user_lates[x], -user_logins[x], x))
-        if user_lates[u] > 0
+        {
+            "name": u,
+            "lates": user_lates.get(u, 0),
+            "clean": user_clean.get(u, 0),
+            "total": user_logins.get(u, 0),
+        }
+        for u in sorted(user_lates.keys(), key=lambda x: (-user_lates.get(x, 0), -user_logins.get(x, 0), x))
+        if user_lates.get(u, 0) > 0
     ][:15]
 
     total_sessions = len(in_records)

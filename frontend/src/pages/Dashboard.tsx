@@ -103,24 +103,38 @@ export function Dashboard({ onEnterKiosk }: DashboardProps = {}) {
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Live Dashboard</h1>
-          <p className="text-sm text-muted-foreground">Real-time recognition feed and attendance activity</p>
+        <div className="flex items-center gap-3.5">
+          <img
+            src="/shc logo.png"
+            alt="SHC Logo"
+            className="size-11 object-contain shrink-0 drop-shadow-xs"
+          />
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">SHC MG Live Dashboard</h1>
+            <p className="text-sm text-muted-foreground">Real-time recognition feed and attendance activity</p>
+          </div>
         </div>
         <div className="flex items-center gap-3">
-          <Badge variant={connected ? "success" : "secondary"} className="gap-1.5 py-1">
-            {connected ? (
-              <>
-                <span className="size-1.5 animate-live-pulse rounded-full bg-success-foreground" />
-                Live
-              </>
-            ) : (
-              <>
-                <WifiOff className="size-3" />
-                Connecting…
-              </>
-            )}
-          </Badge>
+          {state.schedule_closed ? (
+            <Badge variant="outline" className="gap-1.5 py-1 border-amber-500/40 bg-amber-500/10 text-amber-400">
+              <Clock className="size-3" />
+              Closed
+            </Badge>
+          ) : (
+            <Badge variant={connected ? "success" : "secondary"} className="gap-1.5 py-1">
+              {connected ? (
+                <>
+                  <span className="size-1.5 animate-live-pulse rounded-full bg-success-foreground" />
+                  Live
+                </>
+              ) : (
+                <>
+                  <WifiOff className="size-3" />
+                  Connecting…
+                </>
+              )}
+            </Badge>
+          )}
 
           {onEnterKiosk && (
             <Button
@@ -196,6 +210,8 @@ export function Dashboard({ onEnterKiosk }: DashboardProps = {}) {
                       ? "This device's camera isn't available."
                       : null
               }
+              scheduleClosed={state.schedule_closed}
+              scheduleMessage={state.schedule_message}
             />
             <Toast toast={state.toast} />
           </div>
@@ -269,12 +285,18 @@ export function Dashboard({ onEnterKiosk }: DashboardProps = {}) {
                 <Button
                   className="w-full"
                   onClick={() => handleManualEvent("IN")}
-                  disabled={!selectedName || manualBusy !== null}
+                  disabled={!selectedName || manualBusy !== null || Boolean(state.schedule_closed)}
                 >
                   <LogIn className="size-4" />
                   {manualBusy === "IN" ? "Timing in…" : "Time In"}
                 </Button>
               </div>
+
+              {state.schedule_closed && (
+                <p className="text-xs text-amber-500/90 font-medium text-center">
+                  {state.schedule_message || "Check-in is currently closed."}
+                </p>
+              )}
 
               {manualMessage && (
                 <Alert variant="success">

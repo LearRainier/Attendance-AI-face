@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Camera, CheckCircle2, IdCard, Pencil, Plus, Search, Trash2, UserRoundX, XCircle } from "lucide-react";
+import { AlertTriangle, Camera, CheckCircle2, IdCard, Pencil, Plus, Search, Trash2, UserRoundX, XCircle } from "lucide-react";
 
 import {
   deleteUserProfile,
@@ -9,7 +9,9 @@ import {
   type UserProfile,
   type UserProfileInput,
 } from "@/api";
+import { DEPARTMENTS } from "@/constants/departments";
 import { FaceCapture } from "@/components/FaceCapture";
+import { PaginationBar } from "@/components/PaginationBar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -17,6 +19,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Sheet,
   SheetContent,
@@ -30,8 +40,7 @@ const EMPTY_FORM: UserProfileInput = {
   name: "",
   email: "",
   phone: "",
-  department: "",
-  position: "",
+  department: "BSCS",
   student_number: "",
   employee_id: "",
   notes: "",
@@ -63,17 +72,31 @@ export function Users() {
       .catch((err) => setLoadError(err instanceof Error ? err.message : "Failed to load users."));
   };
 
-  useEffect(load, []);
+  useEffect(() => {
+    load();
+  }, []);
+
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
 
   const filtered = useMemo(() => {
     const rows = users ?? [];
     const needle = search.trim().toLowerCase();
     if (!needle) return rows;
     return rows.filter((u) =>
-      [u.name, u.email, u.phone, u.student_number, u.employee_id]
+      [u.name, u.email, u.phone, u.student_number, u.employee_id, u.department]
         .some((field) => field?.toLowerCase().includes(needle))
     );
   }, [users, search]);
+
+  const paginatedUsers = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, page, pageSize]);
 
   const resetCameraState = () => {
     setCameraOpen(false);
@@ -97,8 +120,7 @@ export function Users() {
       name: user.name,
       email: user.email,
       phone: user.phone,
-      department: user.department,
-      position: user.position,
+      department: user.department || "BSCS",
       student_number: studentNum,
       employee_id: studentNum,
       notes: user.notes,
@@ -143,13 +165,19 @@ export function Users() {
     }
   };
 
-  const handleDelete = async (name: string) => {
-    setDeletingName(name);
+  const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const confirmDelete = async () => {
+    if (!userToDelete) return;
+    setDeletingName(userToDelete.name);
+    setDeleteError(null);
     try {
-      await deleteUserProfile(name);
+      await deleteUserProfile(userToDelete.name);
+      setUserToDelete(null);
       load();
-    } catch {
-      // Best-effort — the row simply stays put if this fails.
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete user.");
     } finally {
       setDeletingName(null);
     }
@@ -218,20 +246,34 @@ export function Users() {
             </CardHeader>
             <CardContent className="px-0 py-0">
               {filtered.length > 0 ? (
-                <Table>
+                <>
+                  <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
-                      <TableHead>Contact</TableHead>
                       <TableHead>Student No.</TableHead>
+                      <TableHead>Course</TableHead>
+                      <TableHead>Contact</TableHead>
                       <TableHead>Face</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filtered.map((u) => (
+                    {paginatedUsers.map((u) => (
                       <TableRow key={u.name}>
                         <TableCell className="font-medium">{u.name}</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {u.student_number || u.employee_id || "—"}
+                        </TableCell>
+                        <TableCell>
+                          {u.department ? (
+                            <Badge variant="outline" className="font-semibold text-xs border-primary/30 text-primary">
+                              {u.department}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-muted-foreground">
                           {u.email || u.phone ? (
                             <div className="flex flex-col text-xs">
@@ -241,9 +283,6 @@ export function Users() {
                           ) : (
                             "—"
                           )}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {u.student_number || u.employee_id || "—"}
                         </TableCell>
                         <TableCell>
                           {u.template_count > 0 ? (
@@ -260,9 +299,12 @@ export function Users() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => handleDelete(u.name)}
+                              onClick={() => {
+                                setDeleteError(null);
+                                setUserToDelete(u);
+                              }}
                               disabled={deletingName === u.name}
-                              title="Remove personal details (keeps face templates)"
+                              title="Delete user profile"
                             >
                               <Trash2 className="size-4 text-destructive" />
                             </Button>
@@ -272,7 +314,15 @@ export function Users() {
                     ))}
                   </TableBody>
                 </Table>
-              ) : (
+                <PaginationBar
+                  currentPage={page}
+                  totalItems={filtered.length}
+                  pageSize={pageSize}
+                  onPageChange={setPage}
+                  itemLabel="students"
+                />
+              </>
+            ) : (
                 <div className="flex flex-col items-center gap-2 py-16 text-center text-sm text-muted-foreground">
                   <UserRoundX className="size-6 opacity-50" />
                   {search ? `No one matches "${search}".` : "No one added yet."}
@@ -368,17 +418,35 @@ export function Users() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="user-student-no">Student No.</Label>
-              <Input
-                id="user-student-no"
-                value={form.student_number || form.employee_id || ""}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setForm((f) => ({ ...f, student_number: val, employee_id: val }));
-                }}
-                placeholder="e.g. 24-12345"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="user-student-no">Student No.</Label>
+                <Input
+                  id="user-student-no"
+                  value={form.student_number || form.employee_id || ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setForm((f) => ({ ...f, student_number: val, employee_id: val }));
+                  }}
+                  placeholder="e.g. 24-12345"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="user-department">Course / Department</Label>
+                <select
+                  id="user-department"
+                  value={form.department || "BSCS"}
+                  onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}
+                  className="border-input flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 font-medium cursor-pointer"
+                >
+                  {DEPARTMENTS.map((dept) => (
+                    <option key={dept} value={dept}>
+                      {dept}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -405,6 +473,98 @@ export function Users() {
           </div>
         </SheetContent>
       </Sheet>
+
+      <Dialog
+        open={!!userToDelete}
+        onOpenChange={(open) => {
+          if (!open && !deletingName) {
+            setUserToDelete(null);
+            setDeleteError(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader className="gap-2">
+            <div className="flex size-10 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+              <AlertTriangle className="size-5" />
+            </div>
+            <div>
+              <DialogTitle className="text-base font-semibold">Delete User Profile?</DialogTitle>
+              <DialogDescription className="mt-1 text-xs text-muted-foreground">
+                Are you sure you want to delete this user? This will permanently remove their profile record and registered face templates.
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+
+          {userToDelete && (
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground font-medium">Name:</span>
+                <span className="font-semibold text-foreground">{userToDelete.name}</span>
+              </div>
+              {(userToDelete.student_number || userToDelete.employee_id) && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground font-medium">Student No:</span>
+                  <span className="font-mono text-foreground">
+                    {userToDelete.student_number || userToDelete.employee_id}
+                  </span>
+                </div>
+              )}
+              {userToDelete.department && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground font-medium">Course:</span>
+                  <Badge variant="outline" className="text-[11px] font-semibold border-primary/30 text-primary">
+                    {userToDelete.department}
+                  </Badge>
+                </div>
+              )}
+              {userToDelete.email && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground font-medium">Email:</span>
+                  <span className="text-foreground">{userToDelete.email}</span>
+                </div>
+              )}
+              {userToDelete.template_count > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground font-medium">Face Templates:</span>
+                  <span className="text-muted-foreground">
+                    {userToDelete.template_count} template{userToDelete.template_count === 1 ? "" : "s"}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {deleteError && (
+            <Alert variant="destructive">
+              <XCircle className="size-4" />
+              <AlertDescription className="text-xs">{deleteError}</AlertDescription>
+            </Alert>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setUserToDelete(null);
+                setDeleteError(null);
+              }}
+              disabled={!!deletingName}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmDelete}
+              disabled={!!deletingName}
+              className="gap-1.5"
+            >
+              <Trash2 className="size-4" />
+              {deletingName ? "Deleting..." : "Delete User"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

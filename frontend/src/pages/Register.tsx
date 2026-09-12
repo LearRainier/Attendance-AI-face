@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, Info, Users, XCircle } from "lucide-react";
 
 import { fetchStatus, registerFace, type StatusResponse } from "@/api";
+import { DEPARTMENTS } from "@/constants/departments";
 import { FaceCapture } from "@/components/FaceCapture";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -9,15 +10,19 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PaginationBar } from "@/components/PaginationBar";
 
 export function Register() {
   const [name, setName] = useState("");
   const [studentNumber, setStudentNumber] = useState("");
   const [email, setEmail] = useState("");
+  const [department, setDepartment] = useState<string>("BSCS");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [peoplePage, setPeoplePage] = useState(1);
+  const pageSize = 8;
 
   const studentNumberValid = /^\d{2}-\d{5}$/.test(studentNumber.trim());
   const emailValid = email.trim().includes("@") && email.trim().includes(".");
@@ -49,14 +54,20 @@ export function Register() {
     setError(null);
     setMessage(null);
     try {
-      const result = await registerFace(name.trim(), imageB64, studentNumber.trim(), email.trim());
+      const result = await registerFace(
+        name.trim(),
+        imageB64,
+        studentNumber.trim(),
+        email.trim(),
+        department.trim()
+      );
       if (result.email_status === "already_sent" || result.template_count > 1) {
         setMessage(
-          `Registered ${result.name} (${studentNumber.trim()}). Face template #${result.template_count} saved (existing credentials preserved).`
+          `Registered ${result.name} (${studentNumber.trim()} · ${department}). Face template #${result.template_count} saved (existing credentials preserved).`
         );
       } else {
         setMessage(
-          `Registered ${result.name} (${studentNumber.trim()}). Face template #${result.template_count} saved. Credentials sent to ${email.trim()}.`
+          `Registered ${result.name} (${studentNumber.trim()} · ${department}). Face template #${result.template_count} saved. Credentials sent to ${email.trim()}.`
         );
       }
       refreshStatus();
@@ -93,6 +104,40 @@ export function Register() {
               </div>
 
               <div className="flex flex-col gap-1.5">
+                <Label htmlFor="register-department">Course / Department</Label>
+                <select
+                  id="register-department"
+                  value={department}
+                  onChange={(e) => setDepartment(e.target.value)}
+                  className="border-input flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 font-medium cursor-pointer"
+                >
+                  {DEPARTMENTS.map((dept) => (
+                    <option key={dept} value={dept}>
+                      {dept}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="register-name">Student Full Name</Label>
+                <Input
+                  id="register-name"
+                  list="registered-people-names"
+                  type="text"
+                  placeholder="e.g. Juan Dela Cruz"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  autoComplete="off"
+                />
+                <datalist id="registered-people-names">
+                  {status?.people.map((p) => <option key={p.name} value={p.name} />)}
+                </datalist>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
                 <Label htmlFor="register-email">Domain Email</Label>
                 <Input
                   id="register-email"
@@ -103,22 +148,6 @@ export function Register() {
                   autoComplete="off"
                 />
               </div>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="register-name">Student Full Name</Label>
-              <Input
-                id="register-name"
-                list="registered-people-names"
-                type="text"
-                placeholder="e.g. Juan Dela Cruz"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                autoComplete="off"
-              />
-              <datalist id="registered-people-names">
-                {status?.people.map((p) => <option key={p.name} value={p.name} />)}
-              </datalist>
             </div>
 
             <FaceCapture
@@ -174,24 +203,35 @@ export function Register() {
           </CardHeader>
           <CardContent className="px-0 py-0">
             {status && status.people.length > 0 ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead className="text-right">Templates</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {status.people.map((p) => (
-                    <TableRow key={p.name}>
-                      <TableCell className="font-medium">{p.name}</TableCell>
-                      <TableCell className="text-right">
-                        <Badge variant="secondary">{p.template_count}</Badge>
-                      </TableCell>
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead className="text-right">Templates</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {status.people
+                      .slice((peoplePage - 1) * pageSize, peoplePage * pageSize)
+                      .map((p) => (
+                        <TableRow key={p.name}>
+                          <TableCell className="font-medium">{p.name}</TableCell>
+                          <TableCell className="text-right">
+                            <Badge variant="secondary">{p.template_count}</Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                  </TableBody>
+                </Table>
+                <PaginationBar
+                  currentPage={peoplePage}
+                  totalItems={status.people.length}
+                  pageSize={pageSize}
+                  onPageChange={setPeoplePage}
+                  itemLabel="people"
+                />
+              </>
             ) : (
               <div className="flex flex-col items-center gap-2 py-12 text-center text-sm text-muted-foreground">
                 <Users className="size-6 opacity-50" />

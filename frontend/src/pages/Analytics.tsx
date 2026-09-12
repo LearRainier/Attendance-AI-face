@@ -33,8 +33,10 @@ import {
   fetchAttendance,
   type AnalyticsSummary,
   type AttendanceRecord,
+  type HeatmapDay,
 } from "@/api";
 import { AttendanceHeatmap } from "@/components/AttendanceHeatmap";
+import { DayAttendanceModal } from "@/components/DayAttendanceModal";
 import { KpiCard } from "@/components/KpiCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,6 +53,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { exportAnalyticsReportPdf } from "@/lib/pdfExport";
+import { PaginationBar } from "@/components/PaginationBar";
 import { cn } from "@/lib/utils";
 
 type PeriodMode = "month" | "week";
@@ -82,6 +85,18 @@ export function Analytics() {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("timestamp");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  // Day logs modal state
+  const [selectedHeatmapDay, setSelectedHeatmapDay] = useState<HeatmapDay | null>(null);
+  const [modalOpen, setModalOpen] = useState<boolean>(false);
+
+  // Pagination for Recent Attendance Records Table
+  const [logPage, setLogPage] = useState(1);
+  const logPageSize = 10;
+
+  useEffect(() => {
+    setLogPage(1);
+  }, [search, periodMode, monthValue, weekValue, sortKey, sortDir]);
 
   // Load analytics summary
   const loadData = useCallback(async (isManualRefresh = false) => {
@@ -140,7 +155,12 @@ export function Analytics() {
       else cmp = a.timestamp.localeCompare(b.timestamp);
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [rawRecords, summary, search, sortKey, sortDir]);
+  }, [summary, rawRecords, search, sortKey, sortDir]);
+
+  const paginatedLog = useMemo(() => {
+    const start = (logPage - 1) * logPageSize;
+    return filteredLog.slice(start, start + logPageSize);
+  }, [filteredLog, logPage, logPageSize]);
 
   const toggleSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -348,7 +368,7 @@ export function Analytics() {
                   Attendance Density Heatmap ({summary.filter_label})
                 </CardTitle>
                 <CardDescription>
-                  Gradient intensity reflects active attendees relative to registered users ({summary.registered_count} total).
+                  Gradient intensity reflects active attendees relative to registered users ({summary.registered_count} total). Click any day to view attendee logs.
                 </CardDescription>
               </div>
               <Badge variant="outline" className="font-mono text-xs">
@@ -360,6 +380,10 @@ export function Analytics() {
                 days={summary.heatmap}
                 registeredCount={summary.registered_count}
                 isWeekView={periodMode === "week"}
+                onDayClick={(day) => {
+                  setSelectedHeatmapDay(day);
+                  setModalOpen(true);
+                }}
               />
             </CardContent>
           </Card>
@@ -681,8 +705,8 @@ export function Analytics() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredLog.length > 0 ? (
-                    filteredLog.map((r, i) => {
+                  {paginatedLog.length > 0 ? (
+                    paginatedLog.map((r, i) => {
                       const isLate = r.status === "LATE";
                       return (
                         <TableRow key={`${r.name}-${r.timestamp}-${i}`}>
@@ -730,10 +754,26 @@ export function Analytics() {
                   )}
                 </TableBody>
               </Table>
+              <PaginationBar
+                currentPage={logPage}
+                totalItems={filteredLog.length}
+                pageSize={logPageSize}
+                onPageChange={setLogPage}
+                itemLabel="records"
+              />
             </CardContent>
           </Card>
         </>
       ) : null}
+
+      {/* Day Attendance Logs Modal */}
+      <DayAttendanceModal
+        open={modalOpen}
+        onOpenChange={setModalOpen}
+        day={selectedHeatmapDay}
+        records={rawRecords}
+        registeredCount={summary?.registered_count || 0}
+      />
     </div>
   );
 }

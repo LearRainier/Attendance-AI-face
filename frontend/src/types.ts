@@ -67,4 +67,8 @@ export interface LiveState {
   camera_source: "local" | "browser";
   /** Friendly name of the streaming device, when camera_source is "browser". */
   source_label: string | null;
+  /** Whether check-in is currently closed based on daily schedule cutoff. */
+  schedule_closed?: boolean;
+  /** Closed notice message to output when attendance cutoff is reached. */
+  schedule_message?: string | null;
 }

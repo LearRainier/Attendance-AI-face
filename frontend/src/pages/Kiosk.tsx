@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Clock, ScanFace, ShieldCheck, Wifi, WifiOff } from "lucide-react";
+import { CheckCircle2, Clock, ShieldCheck, Wifi, WifiOff } from "lucide-react";
 
 import { useLiveFeed } from "@/hooks/useLiveFeed";
 import { VideoStage } from "@/components/VideoStage";
@@ -58,11 +58,15 @@ export function Kiosk({ onExitKiosk }: KioskProps = {}) {
       {/* Top Kiosk Header */}
       <header className="flex min-h-16 shrink-0 flex-wrap items-center justify-between gap-3 border-b px-4 sm:px-6 py-2.5 bg-card/60 backdrop-blur-sm">
         <div className="flex items-center gap-3">
-          <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <ScanFace className="size-5" />
-          </div>
+          <img
+            src="/shc logo.png"
+            alt="SHC Logo"
+            className="size-10 sm:size-11 object-contain shrink-0 drop-shadow-xs"
+          />
           <div>
-            <h1 className="text-base font-semibold leading-tight">MG Attendance Kiosk</h1>
+            <h1 className="text-base sm:text-lg font-bold leading-tight tracking-tight">
+              SHC MG Face Attendance System
+            </h1>
             <p className="text-xs text-muted-foreground">Contactless Facial Recognition Check-In</p>
           </div>
         </div>
@@ -73,10 +77,17 @@ export function Kiosk({ onExitKiosk }: KioskProps = {}) {
             <div className="text-[11px] text-muted-foreground">{currentDate}</div>
           </div>
 
-          <Badge variant={connected ? "default" : "outline"} className="gap-1.5 py-1 px-2.5">
-            {connected ? <Wifi className="size-3.5 text-success" /> : <WifiOff className="size-3.5 text-destructive" />}
-            <span className="hidden xs:inline">{connected ? "System Online" : "Connecting..."}</span>
-          </Badge>
+          {state.schedule_closed ? (
+            <Badge variant="outline" className="gap-1.5 py-1 px-2.5 border-amber-500/40 bg-amber-500/10 text-amber-400">
+              <Clock className="size-3.5" />
+              <span>Check-in Closed</span>
+            </Badge>
+          ) : (
+            <Badge variant={connected ? "default" : "outline"} className="gap-1.5 py-1 px-2.5">
+              {connected ? <Wifi className="size-3.5 text-success" /> : <WifiOff className="size-3.5 text-destructive" />}
+              <span className="hidden xs:inline">{connected ? "System Online" : "Connecting..."}</span>
+            </Badge>
+          )}
 
           <Button
             variant="outline"
@@ -113,15 +124,23 @@ export function Kiosk({ onExitKiosk }: KioskProps = {}) {
               }
               connected={connected}
               error={state.camera_error}
+              scheduleClosed={state.schedule_closed}
+              scheduleMessage={state.schedule_message}
             />
 
             <Toast toast={state.toast} />
           </div>
 
           <div className="flex items-center justify-between px-2 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1.5">
-              <ShieldCheck className="size-4 text-primary" /> Active Liveness Detection Enabled
-            </span>
+            {state.schedule_closed ? (
+              <span className="flex items-center gap-1.5 text-amber-400/90 font-medium">
+                <Clock className="size-4 text-amber-400" /> Attendance Closed (Standby Mode)
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5">
+                <ShieldCheck className="size-4 text-primary" /> Active Liveness Detection Enabled
+              </span>
+            )}
             <span>{state.registered_count} Enrolled Students</span>
           </div>
         </div>

@@ -9,7 +9,6 @@ import {
   LogOut,
   Menu,
   MonitorPlay,
-  ScanFace,
   Smartphone,
   UserPlus,
   XCircle,
@@ -43,13 +42,15 @@ const NAV_ITEMS: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
 
 function Brand() {
   return (
-    <div className="flex items-center gap-2 px-2">
-      <div className="flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
-        <ScanFace className="size-4.5" />
-      </div>
+    <div className="flex items-center gap-2.5 px-2">
+      <img
+        src="/shc logo.png"
+        alt="SHC Logo"
+        className="size-9 object-contain shrink-0 drop-shadow-xs"
+      />
       <div className="flex flex-col leading-tight">
-        <span className="text-sm font-semibold">FaceID</span>
-        <span className="text-xs text-muted-foreground">Attendance System</span>
+        <span className="text-sm font-bold tracking-tight text-foreground">SHC MG</span>
+        <span className="text-xs text-muted-foreground">Face Attendance System</span>
       </div>
     </div>
   );
@@ -112,20 +113,10 @@ function NavList({
         {onOpenStudentApp && (
           <button
             onClick={onOpenStudentApp}
-            className="flex items-center gap-2.5 rounded-md border border-sidebar-border/80 bg-sidebar-accent/40 px-3 py-2 text-sm font-medium text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+            className="flex items-center gap-2.5 rounded-md border border-sidebar-border/80 bg-sidebar-accent/40 px-3 py-2 text-sm font-medium text-sidebar-foreground hover:bg-sidebar-accent transition-colors cursor-pointer"
           >
             <Smartphone className="size-4 text-primary" />
             Get Student App
-          </button>
-        )}
-
-        {userRole !== "student" && onEnterKiosk && (
-          <button
-            onClick={onEnterKiosk}
-            className="flex items-center gap-2.5 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10 transition-colors"
-          >
-            <MonitorPlay className="size-4" />
-            Launch Kiosk Mode
           </button>
         )}
 
