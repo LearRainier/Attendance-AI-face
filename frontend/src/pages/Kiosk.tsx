@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Clock, ScanFace, ShieldCheck, Wifi, WifiOff } from "lucide-react";
+import { CheckCircle2, Clock, ShieldCheck, Wifi, WifiOff } from "lucide-react";
 
 import { useLiveFeed } from "@/hooks/useLiveFeed";
 import { VideoStage } from "@/components/VideoStage";
@@ -58,11 +58,15 @@ export function Kiosk({ onExitKiosk }: KioskProps = {}) {
       {/* Top Kiosk Header */}
       <header className="flex min-h-16 shrink-0 flex-wrap items-center justify-between gap-3 border-b px-4 sm:px-6 py-2.5 bg-card/60 backdrop-blur-sm">
         <div className="flex items-center gap-3">
-          <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <ScanFace className="size-5" />
-          </div>
+          <img
+            src="/shc logo.png"
+            alt="SHC Logo"
+            className="size-10 sm:size-11 object-contain shrink-0 drop-shadow-xs"
+          />
           <div>
-            <h1 className="text-base font-semibold leading-tight">MG Attendance Kiosk</h1>
+            <h1 className="text-base sm:text-lg font-bold leading-tight tracking-tight">
+              SHC MG Face Attendance System
+            </h1>
             <p className="text-xs text-muted-foreground">Contactless Facial Recognition Check-In</p>
           </div>
         </div>

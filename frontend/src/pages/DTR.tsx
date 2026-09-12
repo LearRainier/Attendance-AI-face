@@ -31,6 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { exportIndividualDtrPdf } from "@/lib/pdfExport";
+import { PaginationBar } from "@/components/PaginationBar";
 import { cn } from "@/lib/utils";
 
 interface DayRecord {
@@ -77,6 +78,12 @@ export function DTR() {
   const [records, setRecords] = useState<AttendanceRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [tablePage, setTablePage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setTablePage(1);
+  }, [selectedName, month]);
 
   useEffect(() => {
     Promise.all([fetchStatus(), fetchUsers()])
@@ -129,6 +136,11 @@ export function DTR() {
     result.sort((a, b) => a.date.localeCompare(b.date));
     return result;
   }, [records, selectedName, month]);
+
+  const paginatedDays = useMemo(() => {
+    const start = (tablePage - 1) * pageSize;
+    return days.slice(start, start + pageSize);
+  }, [days, tablePage, pageSize]);
 
   // Statistics for this month
   const stats = useMemo(() => {
@@ -274,11 +286,13 @@ export function DTR() {
               />
             </div>
             {currentUserProfile && (
-              <div className="flex flex-col gap-0.5 text-xs text-muted-foreground ml-auto self-center pt-2 sm:pt-0">
+              <div className="flex flex-col gap-0.5 text-xs text-muted-foreground ml-auto self-center pt-2 sm:pt-0 text-right">
                 <span className="font-semibold text-foreground">
-                  {currentUserProfile.student_number || currentUserProfile.employee_id || "Registered User"}
+                  {currentUserProfile.student_number || currentUserProfile.employee_id || "Student ID"}
                 </span>
-                <span>{currentUserProfile.department || "General Department"}</span>
+                <span className="text-primary font-medium">
+                  {currentUserProfile.department ? `Course: ${currentUserProfile.department}` : "Course: Not Specified"}
+                </span>
               </div>
             )}
           </div>
@@ -424,46 +438,55 @@ export function DTR() {
             </CardHeader>
             <CardContent className="px-0 py-0">
               {days.length > 0 ? (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Time In</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {days.map((d) => (
-                      <TableRow key={d.date}>
-                        <TableCell className="font-medium">{dayLabel(d.date)}</TableCell>
-                        <TableCell>{d.timeInTs ? timeLabel(d.timeInTs) : "—"}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "gap-1 font-medium",
-                              d.status === "LATE"
-                                ? "border-warning/60 text-warning bg-warning/10"
-                                : "border-success/60 text-success bg-success/10"
-                            )}
-                          >
-                            {d.status === "LATE" ? (
-                              <>
-                                <Clock className="size-3" />
-                                Late
-                              </>
-                            ) : (
-                              <>
-                                <CheckCircle2 className="size-3" />
-                                Clean
-                              </>
-                            )}
-                          </Badge>
-                        </TableCell>
+                <>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Time In</TableHead>
+                        <TableHead>Status</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {paginatedDays.map((d) => (
+                        <TableRow key={d.date}>
+                          <TableCell className="font-medium">{dayLabel(d.date)}</TableCell>
+                          <TableCell>{d.timeInTs ? timeLabel(d.timeInTs) : "—"}</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                "gap-1 font-medium",
+                                d.status === "LATE"
+                                  ? "border-warning/60 text-warning bg-warning/10"
+                                  : "border-success/60 text-success bg-success/10"
+                              )}
+                            >
+                              {d.status === "LATE" ? (
+                                <>
+                                  <Clock className="size-3" />
+                                  Late
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle2 className="size-3" />
+                                  Clean
+                                </>
+                              )}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                  <PaginationBar
+                    currentPage={tablePage}
+                    totalItems={days.length}
+                    pageSize={pageSize}
+                    onPageChange={setTablePage}
+                    itemLabel="days logged"
+                  />
+                </>
               ) : (
                 <div className="flex flex-col items-center gap-2 py-16 text-center text-sm text-muted-foreground">
                   <FileClock className="size-6 opacity-50" />

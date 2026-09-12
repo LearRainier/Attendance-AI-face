@@ -160,9 +160,9 @@ export function AttendanceHeatmap({
                     )}
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="top" className="p-2.5 text-xs max-w-xs shadow-lg">
-                  <div className="flex flex-col gap-1">
-                    <div className="font-semibold text-popover-foreground">
+                <TooltipContent side="top" className="p-3 text-xs min-w-44 shadow-2xl border border-zinc-700/80 bg-zinc-900 text-zinc-100">
+                  <div className="flex flex-col gap-1.5">
+                    <div className="font-semibold text-white border-b border-zinc-700/60 pb-1">
                       {new Date(cell.date + "T00:00:00").toLocaleDateString(undefined, {
                         weekday: "short",
                         month: "short",
@@ -170,28 +170,20 @@ export function AttendanceHeatmap({
                         year: "numeric",
                       })}
                     </div>
-                    <div className="flex items-center justify-between gap-4 text-muted-foreground">
+                    <div className="flex items-center justify-between gap-4 text-zinc-300">
                       <span>Attendance:</span>
-                      <span className="font-semibold text-popover-foreground">
+                      <span className="font-semibold text-white">
                         {cell.attendees_count} / {registeredCount} ({cell.attendance_rate}%)
                       </span>
                     </div>
-                    <div className="flex items-center justify-between gap-4 text-muted-foreground">
+                    <div className="flex items-center justify-between gap-4 text-zinc-300">
                       <span>Clean / On Time:</span>
-                      <span className="font-semibold text-success">{cell.clean_count}</span>
+                      <span className="font-semibold text-emerald-400">{cell.clean_count}</span>
                     </div>
                     {cell.late_count > 0 && (
-                      <div className="flex items-center justify-between gap-4 text-muted-foreground">
+                      <div className="flex items-center justify-between gap-4 text-zinc-300">
                         <span>Late Check-ins:</span>
-                        <span className="font-semibold text-warning">{cell.late_count}</span>
-                      </div>
-                    )}
-                    {cell.attendee_names && cell.attendee_names.length > 0 && (
-                      <div className="border-t border-border/60 pt-1.5 mt-0.5">
-                        <span className="text-[11px] font-medium text-popover-foreground">Logged in:</span>
-                        <div className="text-[10px] text-muted-foreground line-clamp-3 leading-snug mt-0.5">
-                          {cell.attendee_names.join(", ")}
-                        </div>
+                        <span className="font-semibold text-amber-400">{cell.late_count}</span>
                       </div>
                     )}
                   </div>

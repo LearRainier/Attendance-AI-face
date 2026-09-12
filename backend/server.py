@@ -1289,6 +1289,7 @@ class RegisterRequest(BaseModel):
     name: str
     student_number: str = ""
     email: str = ""
+    department: str = ""
     image_b64: str  # raw base64 or a data: URL from a <canvas>.toDataURL()
 
 
@@ -1350,6 +1351,7 @@ def api_register(payload: RegisterRequest):
         "student_number": student_num or existing_profile.get("student_number", ""),
         "employee_id": student_num or existing_profile.get("employee_id", ""),
         "email": email or existing_profile.get("email", ""),
+        "department": payload.department.strip() or existing_profile.get("department", ""),
         "account_id": student_num or clean_name,
         "salt": salt,
         "password_hash": pwd_hash,
@@ -1819,21 +1821,36 @@ def api_analytics_summary(
 
     # Top 15 users with most logins
     top_most_logins = [
-        {"name": u, "count": user_logins[u], "lates": user_lates[u], "clean": user_clean[u]}
-        for u in sorted(user_logins.keys(), key=lambda x: (-user_logins[x], x))
+        {
+            "name": u,
+            "count": user_logins.get(u, 0),
+            "lates": user_lates.get(u, 0),
+            "clean": user_clean.get(u, 0),
+        }
+        for u in sorted(user_logins.keys(), key=lambda x: (-user_logins.get(x, 0), x))
     ][:15]
 
     # Top 15 users with lowest logins (includes 0-login registered users)
     top_lowest_logins = [
-        {"name": u, "count": user_logins[u], "lates": user_lates[u], "clean": user_clean[u]}
-        for u in sorted(user_logins.keys(), key=lambda x: (user_logins[x], x))
+        {
+            "name": u,
+            "count": user_logins.get(u, 0),
+            "lates": user_lates.get(u, 0),
+            "clean": user_clean.get(u, 0),
+        }
+        for u in sorted(user_logins.keys(), key=lambda x: (user_logins.get(x, 0), x))
     ][:15]
 
     # Top 15 users with most lates
     top_most_lates = [
-        {"name": u, "lates": user_lates[u], "clean": user_clean[u], "total": user_logins[u]}
-        for u in sorted(user_lates.keys(), key=lambda x: (-user_lates[x], -user_logins[x], x))
-        if user_lates[u] > 0
+        {
+            "name": u,
+            "lates": user_lates.get(u, 0),
+            "clean": user_clean.get(u, 0),
+            "total": user_logins.get(u, 0),
+        }
+        for u in sorted(user_lates.keys(), key=lambda x: (-user_lates.get(x, 0), -user_logins.get(x, 0), x))
+        if user_lates.get(u, 0) > 0
     ][:15]
 
     total_sessions = len(in_records)

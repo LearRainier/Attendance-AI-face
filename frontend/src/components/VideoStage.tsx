@@ -140,10 +140,6 @@ export function VideoStage({
             {reopeningInfo}
           </p>
         </div>
-        <div className="flex items-center gap-2 rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-xs text-amber-400/90">
-          <span className="size-1.5 rounded-full bg-amber-400" />
-          <span>Camera Standby (Philippine Time)</span>
-        </div>
       </div>
     );
   }

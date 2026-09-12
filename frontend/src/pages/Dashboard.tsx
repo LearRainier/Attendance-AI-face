@@ -103,9 +103,16 @@ export function Dashboard({ onEnterKiosk }: DashboardProps = {}) {
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Live Dashboard</h1>
-          <p className="text-sm text-muted-foreground">Real-time recognition feed and attendance activity</p>
+        <div className="flex items-center gap-3.5">
+          <img
+            src="/shc logo.png"
+            alt="SHC Logo"
+            className="size-11 object-contain shrink-0 drop-shadow-xs"
+          />
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">SHC MG Live Dashboard</h1>
+            <p className="text-sm text-muted-foreground">Real-time recognition feed and attendance activity</p>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {state.schedule_closed ? (

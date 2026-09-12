@@ -13,11 +13,13 @@ taskkill /f /im cloudflared.exe >nul 2>&1
 taskkill /f /fi "WINDOWTITLE eq Cloudflare Tunnel*" >nul 2>&1
 
 echo [3/3] Closing Kiosk browser...
+taskkill /f /im chrome.exe /fi "WINDOWTITLE eq *SHC MG*" >nul 2>&1
+taskkill /f /im msedge.exe /fi "WINDOWTITLE eq *SHC MG*" >nul 2>&1
 taskkill /f /im chrome.exe /fi "WINDOWTITLE eq *MG Attendance*" >nul 2>&1
 taskkill /f /im msedge.exe /fi "WINDOWTITLE eq *MG Attendance*" >nul 2>&1
 
 echo.
 echo ============================================================
-echo   All MG Attendance processes have been stopped.
+echo   All SHC MG Attendance processes have been stopped.
 echo ============================================================
 ping 127.0.0.1 -n 3 >nul

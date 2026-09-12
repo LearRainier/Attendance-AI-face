@@ -73,7 +73,8 @@ export async function registerFace(
   name: string,
   imageB64: string,
   studentNumber: string = "",
-  email: string = ""
+  email: string = "",
+  department: string = ""
 ): Promise<RegisterResponse> {
   const res = await fetch("/api/register", {
     method: "POST",
@@ -82,6 +83,7 @@ export async function registerFace(
       name,
       student_number: studentNumber,
       email,
+      department,
       image_b64: imageB64,
     }),
   });

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Eye, EyeOff, Lock, LogIn, ScanFace, User, XCircle } from "lucide-react";
+import { Eye, EyeOff, Lock, LogIn, User, XCircle } from "lucide-react";
 
 import { loginAdmin } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -43,10 +43,15 @@ export function Login({ onLoginSuccess }: LoginProps) {
       <div className="w-full max-w-md">
         <Card className="border-border/60 shadow-lg">
           <CardHeader className="space-y-2 text-center pb-0">
-            <div className="mx-auto flex size-12 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
-              <ScanFace className="size-6" />
+            <div className="mx-auto flex size-16 items-center justify-center">
+              <img
+                src="/shc logo.png"
+                alt="SHC Logo"
+                className="size-16 object-contain drop-shadow-xs"
+              />
             </div>
-            <CardTitle className="text-xl font-bold tracking-tight">Admin Sign In</CardTitle>
+            <CardTitle className="text-xl font-bold tracking-tight">SHC MG Face Attendance System</CardTitle>
+            <p className="text-xs text-muted-foreground">Admin Portal Sign In</p>
           </CardHeader>
 
           <CardContent>

@@ -1,9 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
-title MG Attendance - Kiosk Station
+title SHC MG Face Attendance System - Kiosk Station
 
 echo ============================================================
-echo          MG ATTENDANCE - AI KIOSK STATION
+echo      SHC MG FACE ATTENDANCE SYSTEM - KIOSK STATION
 echo ============================================================
 echo.
 
