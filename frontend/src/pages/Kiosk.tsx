@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Footer } from "@/components/Footer";
 
 function initials(name: string) {
   return name
@@ -221,6 +222,7 @@ export function Kiosk({ onExitKiosk }: KioskProps = {}) {
           </Card>
         </div>
       </main>
+      <Footer className="mt-auto" />
     </div>
   );
 }

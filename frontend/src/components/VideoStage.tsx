@@ -121,10 +121,10 @@ export function VideoStage({
     const isSunday = scheduleMessage?.toLowerCase().includes("sunday");
     const isSaturday = scheduleMessage?.toLowerCase().includes("8:00");
     const reopeningInfo = isSunday
-      ? "Attendance is not active on Sundays. Resumes Monday at 2:00 AM."
+      ? "Attendance is not active on Sundays."
       : isSaturday
-      ? "Saturday check-in closed. Resumes Monday at 2:00 AM."
-      : "Camera is disabled. Attendance automatically reopens at 2:00 AM.";
+        ? "Saturday check-in closed."
+        : "Camera is disabled.";
 
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-zinc-950 p-8 text-center min-h-[360px] w-full">

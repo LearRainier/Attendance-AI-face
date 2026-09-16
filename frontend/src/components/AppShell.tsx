@@ -17,6 +17,7 @@ import {
 import { cn } from "@/lib/utils";
 import { changeAdminPassword } from "@/api";
 import { StudentAppModal } from "./StudentAppModal";
+import { Footer } from "./Footer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -312,7 +313,10 @@ export function AppShell({
           )}
         </header>
 
-        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">{children}</main>
+        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {children}
+          <Footer className="mt-auto" />
+        </main>
       </div>
 
       {/* Change Password Sheet */}
