@@ -622,7 +622,7 @@ def evaluate_checkin_time(pht_dt: datetime) -> Tuple[bool, str, str]:
     # 2. Saturday rule: active between 2:00 AM and 8:00 AM (Clean/ON_TIME)
     if pht_dt.weekday() == 5:
         if sec_of_day < START_SEC:
-            return False, "REJECTED", "Check-in closed. Attendance opens at 2:00 AM."
+            return False, "REJECTED", "Check-in closed."
         elif sec_of_day > SATURDAY_CUTOFF_SEC:
             return False, "REJECTED", "Check-in closed. Attendance cutoff was 8:00 AM."
         return True, "ON_TIME", "Logged IN (Saturday Schedule)"
