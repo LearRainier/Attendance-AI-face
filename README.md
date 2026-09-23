@@ -20,7 +20,8 @@ An enterprise-grade, contactless facial recognition attendance kiosk and adminis
 
 ### 1. Requirements
 - **Windows 10/11** or **Ubuntu 22.04 LTS**
-- **Python 3.10 or 3.11** (with "Add Python to PATH" enabled)
+- **Python 3.10, 3.11 or 3.12** (with "Add Python to PATH" enabled)
+  - Python **3.13 or newer will not work** - TensorFlow has no builds for it yet.
 - USB Webcam or built-in camera
 
 ### 2. Launch Kiosk (1-Click)

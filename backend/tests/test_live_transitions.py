@@ -13,6 +13,7 @@ import json
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import src.utils as utils_module
 from src.utils import is_camera_allowed
 from server import state, _refresh_broadcast_payload
 
@@ -20,6 +21,15 @@ PHT = ZoneInfo("Asia/Manila")
 
 
 class TestLiveTransitions(unittest.TestCase):
+
+    def setUp(self):
+        # This walkthrough is written against the schedule being switched on.
+        self._saved_schedule = utils_module._schedule_enabled
+        utils_module._schedule_enabled = True
+
+    def tearDown(self):
+        utils_module._schedule_enabled = self._saved_schedule
+
 
     def test_camera_hardware_and_payload_transition(self):
         """

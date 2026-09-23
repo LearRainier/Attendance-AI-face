@@ -73,6 +73,8 @@ from src.utils import (
     _hash_password,
     sanitize_name,
     is_camera_allowed,
+    is_schedule_enabled,
+    set_schedule_enabled,
     ATTENDANCE_CSV,
 )
 from src.db import init_db, get_all_attendance_records
@@ -218,6 +220,7 @@ class AppState:
             "source_label": None,
             "schedule_closed": False,
             "schedule_message": None,
+            "schedule_enabled": is_schedule_enabled(),
         })
         # Same snapshot minus the (by far largest) "frame" field, for clients
         # that supply the video themselves — a phone streaming its own camera
@@ -487,6 +490,7 @@ def _refresh_broadcast_payload():
         "source_label": state.source_label,
         "schedule_closed": state.schedule_closed,
         "schedule_message": state.schedule_message,
+        "schedule_enabled": is_schedule_enabled(),
     }
     # The frameless variant first, then the same dict plus the frame — the
     # base64 encode still happens at most once per tick either way.
@@ -1977,6 +1981,59 @@ async def api_camera_resume():
     """Let the backend reacquire the webcam for the live dashboard feed."""
     _camera_paused.clear()
     return {"paused": False}
+
+
+class ScheduleSettingRequest(BaseModel):
+    enabled: bool
+
+
+def _schedule_setting_response() -> dict:
+    enabled = is_schedule_enabled()
+    with state.lock:
+        closed = state.schedule_closed
+        message = state.schedule_message
+    return {
+        "enabled": enabled,
+        "schedule_closed": closed if enabled else False,
+        "schedule_message": message if enabled else None,
+    }
+
+
+@app.get("/api/settings/schedule")
+def api_get_schedule_setting():
+    """Current state of the attendance-schedule master switch. Unauthenticated
+    so the kiosk display can show why it is running outside the usual hours."""
+    return _schedule_setting_response()
+
+
+@app.post("/api/settings/schedule")
+async def api_set_schedule_setting(
+    payload: ScheduleSettingRequest,
+    admin_user: str = Depends(get_current_admin),
+):
+    """Turn every time-of-day rule on or off: the camera's operating hours,
+    the 6:30 AM / 8:00 AM check-in cutoffs and the Sunday closure. With it
+    off the kiosk scans around the clock and no check-in is refused for
+    being outside the schedule (arrivals from 5:15 AM on are still marked
+    late). The choice survives restarts."""
+    set_schedule_enabled(payload.enabled)
+    logger.info(
+        "Attendance schedule %s by admin '%s'.",
+        "enabled" if payload.enabled else "disabled",
+        admin_user,
+    )
+
+    # Re-opening is immediate for the client: camera_loop picks the flag up on
+    # its next tick (~1s) and reacquires the camera, but the dashboard
+    # shouldn't keep showing a "closed" banner while that happens.
+    if not payload.enabled:
+        with state.lock:
+            if state.schedule_closed:
+                state.schedule_closed = False
+                state.schedule_message = None
+                state.camera_error = None
+
+    return _schedule_setting_response()
 
 
 # Serve the built React app. Falls back to a helpful message if the

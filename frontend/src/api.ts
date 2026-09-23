@@ -400,3 +400,31 @@ export async function changeAdminPassword(
   return data;
 }
 
+
+export interface ScheduleSetting {
+  enabled: boolean;
+  schedule_closed: boolean;
+  schedule_message: string | null;
+}
+
+/** Current state of the attendance-schedule master switch. */
+export async function getScheduleSetting(): Promise<ScheduleSetting> {
+  const res = await fetch("/api/settings/schedule");
+  return safeParseJson<ScheduleSetting>(res, "Failed to read the schedule setting.");
+}
+
+/** Turn every time-of-day rule on or off (admin only). With it off the kiosk
+ * camera runs around the clock and no check-in is refused for being outside
+ * the schedule. */
+export async function setScheduleEnabled(enabled: boolean): Promise<ScheduleSetting> {
+  const { token } = getStoredAuth();
+  const res = await fetch("/api/settings/schedule", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token || ""}`,
+    },
+    body: JSON.stringify({ enabled }),
+  });
+  return safeParseJson<ScheduleSetting>(res, "Failed to update the schedule setting.");
+}

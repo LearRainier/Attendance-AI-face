@@ -66,6 +66,11 @@ DEDUP_TRACK_COOLDOWN_SECONDS = 10
 DEV_MODE_DEFAULT = False
 DEV_LOGIN_COOLDOWN_SECONDS = 60
 
+# Master switch for every time-of-day rule (camera hours, the 6:30 AM / 8:00 AM
+# cutoffs and the Sunday closure). Admins flip it from the dashboard sidebar;
+# the choice is persisted in data/settings.json under "schedule_enabled".
+SCHEDULE_ENABLED_DEFAULT = True
+
 # In-memory caches of last successful log times
 _logged_tracks = {}  # {track_id: datetime}
 _logged_names = {}   # {name: datetime}
@@ -246,6 +251,29 @@ def save_settings(updates):
     with open(SETTINGS_JSON, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
     return settings
+
+
+# camera_loop() consults the schedule on every frame, so the flag is held in
+# memory rather than re-read from disk each time. Seeded once at import and
+# rewritten by set_schedule_enabled(), which is the only thing that changes it.
+_schedule_enabled = bool(load_settings().get("schedule_enabled", SCHEDULE_ENABLED_DEFAULT))
+
+
+def is_schedule_enabled() -> bool:
+    """Whether the time-of-day rules are in force. When False the kiosk camera
+    runs around the clock and no check-in is ever refused for being outside
+    the schedule (see is_camera_allowed and evaluate_checkin_time)."""
+    return _schedule_enabled
+
+
+def set_schedule_enabled(enabled: bool) -> bool:
+    """Turn the schedule rules on or off and remember the choice across
+    restarts. Returns the value actually stored."""
+    global _schedule_enabled
+    _schedule_enabled = bool(enabled)
+    save_settings({"schedule_enabled": _schedule_enabled})
+    logger.info("Attendance schedule %s.", "enabled" if _schedule_enabled else "disabled")
+    return _schedule_enabled
 
 
 DEFAULT_ADMIN_USERNAME = "admin"
@@ -551,10 +579,16 @@ def crop_face_with_padding(frame, bbox, padding_percentage=0.25):
     return frame[y1:y2, x1:x2]
 
 
-def is_camera_allowed(pht_dt: datetime) -> Tuple[bool, Optional[str]]:
+def is_camera_allowed(
+    pht_dt: datetime, schedule_enabled: Optional[bool] = None
+) -> Tuple[bool, Optional[str]]:
     """
     Evaluates whether the camera and face recognition login should be active
-    based on schedule rules in Philippine Time (UTC+8):
+    based on schedule rules in Philippine Time (UTC+8).
+
+    ``schedule_enabled`` defaults to the persisted master switch
+    (is_schedule_enabled()). When it is off the camera is always allowed, on
+    every day and at every hour, and none of the rules below apply:
 
     - Sundays (pht_dt.weekday() == 6):
         Camera disabled all day. "login is currently closed. Attendance is not active on Sundays."
@@ -567,6 +601,11 @@ def is_camera_allowed(pht_dt: datetime) -> Tuple[bool, Optional[str]]:
         Closed after 06:30:00 AM and before 02:00:00 AM next day:
         "login is currently closed as 6:30 AM has passed."
     """
+    if schedule_enabled is None:
+        schedule_enabled = is_schedule_enabled()
+    if not schedule_enabled:
+        return True, None
+
     weekday = pht_dt.weekday()  # 0=Mon, 4=Fri, 5=Sat, 6=Sun
     sec_of_day = pht_dt.hour * 3600 + pht_dt.minute * 60 + pht_dt.second
     START_SEC = 2 * 3600             # 02:00:00 AM = 7200 sec
@@ -592,9 +631,17 @@ def is_camera_allowed(pht_dt: datetime) -> Tuple[bool, Optional[str]]:
     return True, None
 
 
-def evaluate_checkin_time(pht_dt: datetime) -> Tuple[bool, str, str]:
+def evaluate_checkin_time(
+    pht_dt: datetime, schedule_enabled: Optional[bool] = None
+) -> Tuple[bool, str, str]:
     """
     Evaluates check-in time against daily attendance rules in Philippine Time.
+
+    ``schedule_enabled`` defaults to the persisted master switch
+    (is_schedule_enabled()). When it is off no check-in is ever refused - on
+    any day, at any hour - but the LATE label is kept so the DTR still tells a
+    late arrival from an on-time one: anything from 05:15 AM onwards is LATE,
+    anything earlier is ON_TIME.
 
     Rules:
     - Sundays (pht_dt.weekday() == 6): Attendance is not needed. No one can log on Sunday.
@@ -609,15 +656,25 @@ def evaluate_checkin_time(pht_dt: datetime) -> Tuple[bool, str, str]:
     Returns:
         (allowed: bool, status: str, message: str)
     """
-    # 1. Sunday rule: Attendance is not active; logins are blocked
-    if pht_dt.weekday() == 6:
-        return False, "SUNDAY_CLOSED", "Attendance is not active on Sundays. Check-in closed."
+    if schedule_enabled is None:
+        schedule_enabled = is_schedule_enabled()
 
     sec_of_day = pht_dt.hour * 3600 + pht_dt.minute * 60 + pht_dt.second
     START_SEC = 2 * 3600                  # 02:00:00 = 7200
     WEEKDAY_CUTOFF_SEC = 6 * 3600 + 30 * 60  # 06:30:00 = 23400
     LATE_START_SEC = 5 * 3600 + 15 * 60   # 05:15:00 = 18900
     SATURDAY_CUTOFF_SEC = 8 * 3600        # 08:00:00 = 28800
+
+    # 0. Master switch off: accept every check-in, on every day, but still
+    #    mark the ones from 05:15 AM onwards as late.
+    if not schedule_enabled:
+        if sec_of_day >= LATE_START_SEC:
+            return True, "LATE", "Logged IN (Late)"
+        return True, "ON_TIME", "Logged IN (On Time)"
+
+    # 1. Sunday rule: Attendance is not active; logins are blocked
+    if pht_dt.weekday() == 6:
+        return False, "SUNDAY_CLOSED", "Attendance is not active on Sundays. Check-in closed."
 
     # 2. Saturday rule: active between 2:00 AM and 8:00 AM (Clean/ON_TIME)
     if pht_dt.weekday() == 5:

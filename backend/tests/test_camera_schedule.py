@@ -11,12 +11,26 @@ import os
 # Add backend directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import src.utils as utils_module
 from src.utils import is_camera_allowed, evaluate_checkin_time
 
 PHT = ZoneInfo("Asia/Manila")
 
 
-class TestCameraSchedule(unittest.TestCase):
+class ScheduleOnTestCase(unittest.TestCase):
+    """Base for cases that describe the rules while the schedule master
+    switch is ON. Pins the switch for the duration so the suite still passes
+    on a machine where an admin has turned the schedule off."""
+
+    def setUp(self):
+        self._saved_schedule = utils_module._schedule_enabled
+        utils_module._schedule_enabled = True
+
+    def tearDown(self):
+        utils_module._schedule_enabled = self._saved_schedule
+
+
+class TestCameraSchedule(ScheduleOnTestCase):
 
     def test_weekday_schedule(self):
         # Wednesday (weekday 2)
@@ -150,6 +164,57 @@ class TestCameraSchedule(unittest.TestCase):
         allowed, msg = is_camera_allowed(dt_mon_reopen)
         self.assertTrue(allowed)
         self.assertIsNone(msg)
+
+
+class TestScheduleDisabled(unittest.TestCase):
+    """With the master switch off, every time-of-day rule is bypassed: the
+    camera never closes and no check-in is refused. Only the LATE label
+    survives, from 05:15 AM onwards, so the DTR stays meaningful."""
+
+    def test_camera_always_allowed(self):
+        for dt in (
+            datetime(2026, 9, 9, 9, 0, 0, tzinfo=PHT),    # Wednesday, past the 6:30 cutoff
+            datetime(2026, 9, 9, 1, 0, 0, tzinfo=PHT),    # Wednesday, before the 2:00 opening
+            datetime(2026, 9, 12, 15, 0, 0, tzinfo=PHT),  # Saturday, past the 8:00 cutoff
+            datetime(2026, 9, 13, 10, 0, 0, tzinfo=PHT),  # Sunday
+            datetime(2026, 9, 13, 23, 59, 59, tzinfo=PHT),
+        ):
+            allowed, msg = is_camera_allowed(dt, schedule_enabled=False)
+            self.assertTrue(allowed, f"camera should stay open at {dt}")
+            self.assertIsNone(msg)
+
+    def test_checkin_never_rejected(self):
+        for dt in (
+            datetime(2026, 9, 9, 9, 0, 0, tzinfo=PHT),    # Wednesday morning, past cutoff
+            datetime(2026, 9, 9, 22, 30, 0, tzinfo=PHT),  # Wednesday night
+            datetime(2026, 9, 12, 15, 0, 0, tzinfo=PHT),  # Saturday afternoon
+            datetime(2026, 9, 13, 10, 0, 0, tzinfo=PHT),  # Sunday
+        ):
+            allowed, status, _ = evaluate_checkin_time(dt, schedule_enabled=False)
+            self.assertTrue(allowed, f"check-in should be accepted at {dt}")
+            self.assertEqual(status, "LATE")
+
+    def test_late_boundary_still_applies(self):
+        # 05:14:59 -> on time, 05:15:00 -> late, on every day of the week.
+        for day in range(7):
+            date = datetime(2026, 9, 7 + day, 5, 14, 59, tzinfo=PHT)
+            allowed, status, _ = evaluate_checkin_time(date, schedule_enabled=False)
+            self.assertTrue(allowed)
+            self.assertEqual(status, "ON_TIME", f"05:14:59 should be on time (weekday {date.weekday()})")
+
+            date = date.replace(second=0, minute=15)
+            allowed, status, _ = evaluate_checkin_time(date, schedule_enabled=False)
+            self.assertTrue(allowed)
+            self.assertEqual(status, "LATE", f"05:15:00 should be late (weekday {date.weekday()})")
+
+    def test_before_opening_hour_counts_as_on_time(self):
+        # 01:00 AM is outside the 2:00-6:30 window but earlier than the late
+        # boundary, so it is accepted as on time rather than late.
+        allowed, status, _ = evaluate_checkin_time(
+            datetime(2026, 9, 9, 1, 0, 0, tzinfo=PHT), schedule_enabled=False
+        )
+        self.assertTrue(allowed)
+        self.assertEqual(status, "ON_TIME")
 
 
 if __name__ == "__main__":

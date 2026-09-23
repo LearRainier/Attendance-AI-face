@@ -1,5 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
+  AlarmClock,
   BarChart3,
   CheckCircle2,
   Clock,
@@ -15,7 +16,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { changeAdminPassword } from "@/api";
+import { changeAdminPassword, getScheduleSetting, setScheduleEnabled } from "@/api";
 import { StudentAppModal } from "./StudentAppModal";
 import { Footer } from "./Footer";
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,98 @@ function Brand() {
         <span className="text-sm font-bold tracking-tight text-foreground">SHC MG</span>
         <span className="text-xs text-muted-foreground">Face Attendance System</span>
       </div>
+    </div>
+  );
+}
+
+/** Master switch for every time-of-day rule: the kiosk camera's operating
+ * hours, the 6:30 AM / 8:00 AM check-in cutoffs and the Sunday closure.
+ * Turning it off keeps the kiosk scanning around the clock; arrivals from
+ * 5:15 AM on are still recorded as late. The choice lives on the backend, so
+ * it applies to every screen and survives a restart. */
+function ScheduleToggle() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getScheduleSetting()
+      .then((s) => {
+        if (!cancelled) setEnabled(s.enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setError("Couldn't read the schedule setting.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const toggle = useCallback(async () => {
+    if (enabled === null || busy) return;
+    const next = !enabled;
+    setBusy(true);
+    setError(null);
+    // Optimistic: the switch should follow the finger straight away, and the
+    // backend answer below is what it settles on.
+    setEnabled(next);
+    try {
+      const saved = await setScheduleEnabled(next);
+      setEnabled(saved.enabled);
+    } catch (err) {
+      setEnabled(!next);
+      setError(err instanceof Error ? err.message : "Failed to update the schedule.");
+    } finally {
+      setBusy(false);
+    }
+  }, [enabled, busy]);
+
+  const loading = enabled === null;
+  const on = enabled === true;
+
+  return (
+    <div className="flex flex-col gap-1.5 rounded-lg border border-sidebar-border/60 bg-sidebar-accent/30 p-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <AlarmClock
+            className={cn("size-4 shrink-0", on ? "text-primary" : "text-muted-foreground")}
+          />
+          <span className="text-xs font-medium truncate">Attendance Schedule</span>
+        </div>
+
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label="Attendance schedule"
+          disabled={loading || busy}
+          onClick={toggle}
+          className={cn(
+            "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors cursor-pointer",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+            "disabled:cursor-not-allowed disabled:opacity-50",
+            on ? "bg-primary border-primary" : "bg-muted border-sidebar-border"
+          )}
+        >
+          <span
+            className={cn(
+              "pointer-events-none inline-block size-3.5 rounded-full bg-background shadow-xs transition-transform",
+              on ? "translate-x-4.5" : "translate-x-0.5"
+            )}
+          />
+        </button>
+      </div>
+
+      <p className="text-[10px] leading-snug text-muted-foreground">
+        {loading
+          ? "Checking…"
+          : on
+            ? "On — kiosk runs 2:00–6:30 AM (8:00 AM Sat), closed Sundays."
+            : "Off — kiosk scans any day, any time. Check-ins are never refused."}
+      </p>
+
+      {error && <p className="text-[10px] leading-snug text-destructive">{error}</p>}
     </div>
   );
 }
@@ -111,6 +204,8 @@ function NavList({
       </div>
 
       <div className="flex flex-col gap-2 pt-4 border-t border-sidebar-border mt-auto">
+        {userRole !== "student" && <ScheduleToggle />}
+
         {onOpenStudentApp && (
           <button
             onClick={onOpenStudentApp}

@@ -70,10 +70,12 @@ MG Attendance is an enterprise-ready contactless facial recognition attendance k
 
 ### Software Prerequisites
 - **Operating System**: Windows 10/11 (64-bit) or Ubuntu 22.04+ LTS.
-- **Python**: **Version 3.10 or 3.11** (64-bit).
+- **Python**: **Version 3.10, 3.11 or 3.12** (64-bit).
   > [!IMPORTANT]
   > During Python installation, you **must** check the box: **"Add Python to PATH"**.
-- **Node.js**: Version 18 LTS or 20 LTS (required only on developer machines to build the frontend; not required on pure Kiosk machines if using pre-built `frontend/dist`).
+  > Do **not** use Python 3.13 or newer: TensorFlow publishes no packages for those
+  > versions, so the AI dependencies silently fail to install and the server never starts.
+- **Node.js**: Version 18 LTS or 20 LTS (required only on developer machines to build the frontend; not required on pure Kiosk machines if `frontend/dist` was copied over already - note that `frontend/dist` is git-ignored, so a fresh clone never contains it and `start_kiosk.bat` will build it on first run).
 - **Web Browser**: Google Chrome or Microsoft Edge (comes pre-installed on Windows).
 - **Git**: Git for Windows (for cloning and updating code).
 
@@ -135,7 +137,7 @@ The Vite development server runs on `http://localhost:5173`. It automatically pr
 In an on-campus or office deployment, the PC connected to the kiosk webcam runs both the AI recognition backend and the interactive kiosk screen.
 
 ### Step 1: Initial PC Setup
-1. Install **Python 3.10 or 3.11** (Ensure "Add Python to PATH" is checked).
+1. Install **Python 3.10, 3.11 or 3.12** (Ensure "Add Python to PATH" is checked; 3.13+ is not supported).
 2. Install **Google Chrome** or **Microsoft Edge**.
 3. Connect the USB Webcam and verify video functionality in the Windows Camera app.
 4. Clone or copy the repository to a permanent location (e.g. `C:\MG-Attendance` or `D:\MG-Attendance`).

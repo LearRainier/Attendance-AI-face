@@ -71,4 +71,9 @@ export interface LiveState {
   schedule_closed?: boolean;
   /** Closed notice message to output when attendance cutoff is reached. */
   schedule_message?: string | null;
+  /** Whether the time-of-day rules (camera hours, cutoffs, Sunday closure)
+   * are in force at all. Admins flip this from the sidebar; while it is
+   * false the kiosk scans around the clock and `schedule_closed` stays
+   * false. */
+  schedule_enabled?: boolean;
 }
