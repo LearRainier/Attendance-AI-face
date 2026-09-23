@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Activity, CheckCircle2, Clock, LogIn, MonitorPlay, ScanFace, Users, Wifi, WifiOff, XCircle } from "lucide-react";
 
-import { fetchStatus, logManualAttendance } from "@/api";
+import { fetchStatus, logManualAttendance, resumeBackendCamera } from "@/api";
 import { useLiveFeed } from "@/hooks/useLiveFeed";
 import { useDeviceCamera, type CameraFacing } from "@/hooks/useDeviceCamera";
 import { cameraSupport, isMobileDevice } from "@/lib/device";
@@ -63,6 +63,7 @@ export function Dashboard({ onEnterKiosk }: DashboardProps = {}) {
   const [cameraError, setCameraError] = useState<string | null>(null);
 
   useEffect(() => {
+    resumeBackendCamera().catch(() => {});
     fetchStatus()
       .then((status) => {
         const names = status.people.map((p) => p.name);

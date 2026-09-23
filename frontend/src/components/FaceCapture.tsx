@@ -180,10 +180,12 @@ export function FaceCapture({
     return () => {
       cancelled = true;
       streamRef.current?.getTracks().forEach((t) => t.stop());
-      resumeBackendCamera().catch(() => {
-        // Best-effort: the camera loop's own retry logic will still recover
-        // on its next iteration even if this particular call is lost.
-      });
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon("/api/camera/resume");
+        }
+      } catch {}
+      resumeBackendCamera().catch(() => {});
     };
   }, []);
 

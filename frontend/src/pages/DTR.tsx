@@ -211,7 +211,19 @@ export function DTR() {
   // Export Handlers: PDF & CSV
   const handleExportCsv = () => {
     if (!selectedName || days.length === 0) return;
-    const header = "Date,Day,Time In,Status\n";
+    const yl = currentUserProfile?.year_level ? `Year ${currentUserProfile.year_level}` : "Year 1";
+    const courseYear = `${currentUserProfile?.department || "N/A"} - ${yl}${currentUserProfile?.is_deployed ? " (Deployed)" : ""}`;
+    const studentId = currentUserProfile?.student_number || currentUserProfile?.employee_id || "N/A";
+
+    const meta = [
+      `"Student Name: ${selectedName}"`,
+      `"Student ID: ${studentId}"`,
+      `"Course & Year: ${courseYear}"`,
+      `"Month: ${month}"`,
+      "",
+    ].join("\n");
+
+    const header = "Date,Day,Course & Year,Time In,Status\n";
     const rows = days.map((d) => {
       const [yr, mo, dy] = d.date.split("-").map(Number);
       const dow = new Date(yr, mo - 1, dy).toLocaleDateString("en-US", { weekday: "long" });
@@ -223,9 +235,9 @@ export function DTR() {
         : dow === "Sunday"
         ? "Sunday (Off)"
         : "Absent";
-      return [d.date, dow, `"${timeStr}"`, `"${statusStr}"`].join(",");
+      return [d.date, dow, `"${courseYear}"`, `"${timeStr}"`, `"${statusStr}"`].join(",");
     });
-    const csvContent = header + rows.join("\n") + "\n";
+    const csvContent = meta + "\n" + header + rows.join("\n") + "\n";
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -328,9 +340,18 @@ export function DTR() {
                 <span className="font-semibold text-foreground">
                   {currentUserProfile.student_number || currentUserProfile.employee_id || "Student ID"}
                 </span>
-                <span className="text-primary font-medium">
-                  {currentUserProfile.department ? `Course: ${currentUserProfile.department}` : "Course: Not Specified"}
-                </span>
+                <div className="flex items-center justify-end gap-1.5">
+                  <span className="text-primary font-medium">
+                    {currentUserProfile.department
+                      ? `${currentUserProfile.department} - Year ${currentUserProfile.year_level || 1}`
+                      : "Course: Not Specified"}
+                  </span>
+                  {currentUserProfile.is_deployed && (
+                    <Badge variant="warning" className="font-semibold text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 py-0 px-1">
+                      Deployed
+                    </Badge>
+                  )}
+                </div>
               </div>
             )}
           </div>

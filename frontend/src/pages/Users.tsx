@@ -10,6 +10,7 @@ import {
   type UserProfileInput,
 } from "@/api";
 import { DEPARTMENTS } from "@/constants/departments";
+import { cn } from "@/lib/utils";
 import { FaceCapture } from "@/components/FaceCapture";
 import { PaginationBar } from "@/components/PaginationBar";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,8 @@ const EMPTY_FORM: UserProfileInput = {
   email: "",
   phone: "",
   department: "BSCS",
+  year_level: 1,
+  is_deployed: false,
   student_number: "",
   employee_id: "",
   notes: "",
@@ -121,6 +124,8 @@ export function Users() {
       email: user.email,
       phone: user.phone,
       department: user.department || "BSCS",
+      year_level: user.year_level || 1,
+      is_deployed: Boolean(user.is_deployed),
       student_number: studentNum,
       employee_id: studentNum,
       notes: user.notes,
@@ -266,13 +271,20 @@ export function Users() {
                           {u.student_number || u.employee_id || "—"}
                         </TableCell>
                         <TableCell>
-                          {u.department ? (
-                            <Badge variant="outline" className="font-semibold text-xs border-primary/30 text-primary">
-                              {u.department}
-                            </Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {u.department ? (
+                              <Badge variant="outline" className="font-semibold text-xs border-primary/30 text-primary">
+                                {u.department} - {u.year_level || 1}
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                            {u.is_deployed && (
+                              <Badge variant="warning" className="font-semibold text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30">
+                                Deployed
+                              </Badge>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           {u.email || u.phone ? (
@@ -418,7 +430,7 @@ export function Users() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="user-student-no">Student No.</Label>
                 <Input
@@ -433,11 +445,18 @@ export function Users() {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="user-department">Course / Department</Label>
+                <Label htmlFor="user-department">Course</Label>
                 <select
                   id="user-department"
                   value={form.department || "BSCS"}
-                  onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}
+                  onChange={(e) => {
+                    const newDept = e.target.value;
+                    setForm((f) => ({
+                      ...f,
+                      department: newDept,
+                      is_deployed: newDept === "BSSW" && (f.year_level || 1) === 4 ? f.is_deployed : false,
+                    }));
+                  }}
                   className="border-input flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 font-medium cursor-pointer"
                 >
                   {DEPARTMENTS.map((dept) => (
@@ -446,6 +465,66 @@ export function Users() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="user-year-level">Year Level</Label>
+                <select
+                  id="user-year-level"
+                  value={form.year_level || 1}
+                  onChange={(e) => {
+                    const newYl = Number(e.target.value);
+                    setForm((f) => ({
+                      ...f,
+                      year_level: newYl,
+                      is_deployed: f.department === "BSSW" && newYl === 4 ? f.is_deployed : false,
+                    }));
+                  }}
+                  className="border-input flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 font-medium cursor-pointer"
+                >
+                  <option value={1}>1st Year</option>
+                  <option value={2}>2nd Year</option>
+                  <option value={3}>3rd Year</option>
+                  <option value={4}>4th Year</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Deployed Toggle for BSSW 4 */}
+            <div
+              className={cn(
+                "rounded-lg border p-3.5 transition-colors",
+                form.department === "BSSW" && (form.year_level || 1) === 4
+                  ? "border-amber-500/30 bg-amber-500/5"
+                  : "border-border/60 bg-muted/20 opacity-70"
+              )}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                    Deployed (Fieldwork / OJT)
+                    {form.department === "BSSW" && (form.year_level || 1) === 4 && (
+                      <Badge variant="outline" className="border-amber-500/40 text-amber-600 dark:text-amber-400 text-[10px] py-0 px-1.5">
+                        BSSW 4
+                      </Badge>
+                    )}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {form.department === "BSSW" && (form.year_level || 1) === 4
+                      ? "Exempt from daily login requirements; excluded from low logins reports."
+                      : "Only applicable to 4th Year BSSW students."}
+                  </span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.is_deployed && form.department === "BSSW" && (form.year_level || 1) === 4)}
+                    disabled={form.department !== "BSSW" || (form.year_level || 1) !== 4}
+                    onChange={(e) => setForm((f) => ({ ...f, is_deployed: e.target.checked }))}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500 peer-disabled:cursor-not-allowed peer-disabled:opacity-50"></div>
+                </label>
               </div>
             </div>
 

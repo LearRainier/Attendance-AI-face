@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CameraOff, Clock } from "lucide-react";
+import { Camera, CameraOff, Clock } from "lucide-react";
 
 import type { RangeHint, Track } from "@/types";
 import { TrackOverlay } from "@/components/TrackOverlay";
@@ -148,7 +148,7 @@ export function VideoStage({
 
   if (!hasPicture) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 bg-black px-6 text-center text-sm">
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-black px-6 text-center text-sm">
         {statusMessage ? (
           <span className="text-neutral-300">{statusMessage}</span>
         ) : connected && error ? (
@@ -156,8 +156,21 @@ export function VideoStage({
             <CameraOff className="size-6 text-destructive" />
             <span className="max-w-sm text-neutral-300">{error}</span>
           </>
+        ) : connected ? (
+          <div className="flex flex-col items-center gap-3">
+            <div className="relative flex size-10 items-center justify-center">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary/20 opacity-75"></span>
+              <span className="relative inline-flex size-8 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <Camera className="size-4 animate-pulse" />
+              </span>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium text-neutral-200">Initializing Live Camera</span>
+              <span className="text-xs text-neutral-400">Starting 720p @ 30 FPS stream…</span>
+            </div>
+          </div>
         ) : (
-          <span className="text-neutral-400">{connected ? "Waiting for camera…" : "Connecting to backend…"}</span>
+          <span className="text-neutral-400">Connecting to backend…</span>
         )}
       </div>
     );
@@ -195,7 +208,9 @@ export function VideoStage({
           style={mediaStyle}
           onLoad={(e) => {
             const img = e.currentTarget;
-            setNatural({ width: img.naturalWidth, height: img.naturalHeight });
+            if (natural.width !== img.naturalWidth || natural.height !== img.naturalHeight) {
+              setNatural({ width: img.naturalWidth, height: img.naturalHeight });
+            }
           }}
         />
       )}
