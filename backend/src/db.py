@@ -58,6 +58,9 @@ def init_db():
                 role TEXT DEFAULT 'student',
                 credentials_sent INTEGER DEFAULT 0,
                 credentials_sent_at TEXT,
+                year_level INTEGER DEFAULT 1,
+                is_deployed INTEGER DEFAULT 0,
+                last_academic_year INTEGER,
                 created_at TEXT,
                 updated_at TEXT
             );
@@ -89,7 +92,49 @@ def init_db():
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_attendance_status ON attendance(status);")
 
+        # Migration: ensure year_level, is_deployed, last_academic_year exist in users table
+        user_cursor = conn.execute("PRAGMA table_info(users)")
+        existing_user_cols = {row["name"] for row in user_cursor.fetchall()}
+        if "year_level" not in existing_user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN year_level INTEGER DEFAULT 1")
+            logger.info("Migrated users table: added 'year_level' column.")
+        if "is_deployed" not in existing_user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN is_deployed INTEGER DEFAULT 0")
+            logger.info("Migrated users table: added 'is_deployed' column.")
+        if "last_academic_year" not in existing_user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN last_academic_year INTEGER")
+            logger.info("Migrated users table: added 'last_academic_year' column.")
+
+        # Run auto-increment check on initialization
+        auto_increment_year_levels(conn)
+
     logger.info("SQLite database initialized at: %s", DB_PATH)
+
+
+def get_current_academic_year(dt: Optional[Any] = None) -> int:
+    """Returns starting year of the academic year based on July rollover.
+    July to Dec of year Y is AY Y-(Y+1).
+    Jan to June of year Y is AY (Y-1)-Y.
+    """
+    from src.utils import get_pht_now
+    now = dt or get_pht_now()
+    return now.year if now.month >= 7 else (now.year - 1)
+
+
+def auto_increment_year_levels(conn: sqlite3.Connection):
+    """Automatically increments student year level on the month of July.
+    - If last_academic_year is NULL, initializes it to current_ay.
+    - If last_academic_year < current_ay, increments year_level up to max 4,
+      and updates last_academic_year = current_ay.
+    """
+    current_ay = get_current_academic_year()
+    conn.execute("UPDATE users SET last_academic_year = ? WHERE last_academic_year IS NULL", (current_ay,))
+    conn.execute("""
+        UPDATE users
+        SET year_level = MIN(4, COALESCE(year_level, 1) + (? - last_academic_year)),
+            last_academic_year = ?
+        WHERE last_academic_year < ?
+    """, (current_ay, current_ay, current_ay))
 
 
 def db_row_to_dict(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
@@ -97,6 +142,9 @@ def db_row_to_dict(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
         return None
     d = dict(row)
     d["credentials_sent"] = bool(d.get("credentials_sent", 0))
+    d["year_level"] = int(d.get("year_level") or 1)
+    d["is_deployed"] = bool(d.get("is_deployed", 0))
+    d["last_academic_year"] = d.get("last_academic_year")
     return d
 
 
@@ -104,6 +152,7 @@ def load_user_profiles() -> Dict[str, Dict[str, Any]]:
     """Return all user profiles keyed by sanitized name."""
     init_db()
     with get_db() as conn:
+        auto_increment_year_levels(conn)
         cursor = conn.execute("SELECT * FROM users ORDER BY name ASC")
         rows = cursor.fetchall()
         profiles = {}
@@ -122,6 +171,7 @@ def save_user_profile(name: str, fields: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("Name cannot be empty.")
 
     now_str = get_pht_now().strftime("%Y-%m-%d %H:%M:%S")
+    current_ay = get_current_academic_year()
     init_db()
 
     with get_db() as conn:
@@ -143,6 +193,15 @@ def save_user_profile(name: str, fields: Dict[str, Any]) -> Dict[str, Any]:
             cred_sent = int(fields.get("credentials_sent")) if "credentials_sent" in fields else current.get("credentials_sent", 0)
             cred_sent_at = fields.get("credentials_sent_at") if "credentials_sent_at" in fields else current.get("credentials_sent_at")
 
+            raw_yl = fields.get("year_level", current.get("year_level", 1))
+            year_level = max(1, min(4, int(raw_yl or 1)))
+
+            raw_dep = fields.get("is_deployed", current.get("is_deployed", 0))
+            is_deployed = 1 if raw_dep else 0
+            # Deployed toggle is only allowed for BSSW 4 students
+            if department != "BSSW" or year_level != 4:
+                is_deployed = 0
+
             conn.execute("""
                 UPDATE users SET
                     student_number = ?,
@@ -159,11 +218,15 @@ def save_user_profile(name: str, fields: Dict[str, Any]) -> Dict[str, Any]:
                     role = ?,
                     credentials_sent = ?,
                     credentials_sent_at = ?,
+                    year_level = ?,
+                    is_deployed = ?,
+                    last_academic_year = ?,
                     updated_at = ?
                 WHERE name = ?
             """, (
                 student_num, emp_id, email, phone, department, position, notes,
                 temp_pwd, pwd_hash, salt, account_id, role, cred_sent, cred_sent_at,
+                year_level, is_deployed, current_ay,
                 now_str, clean_name
             ))
         else:
@@ -182,16 +245,26 @@ def save_user_profile(name: str, fields: Dict[str, Any]) -> Dict[str, Any]:
             cred_sent = int(fields.get("credentials_sent", False))
             cred_sent_at = fields.get("credentials_sent_at")
 
+            raw_yl = fields.get("year_level", 1)
+            year_level = max(1, min(4, int(raw_yl or 1)))
+
+            raw_dep = fields.get("is_deployed", 0)
+            is_deployed = 1 if raw_dep else 0
+            if department != "BSSW" or year_level != 4:
+                is_deployed = 0
+
             conn.execute("""
                 INSERT INTO users (
                     name, student_number, employee_id, email, phone, department,
                     position, notes, temp_password, password_hash, salt, account_id,
-                    role, credentials_sent, credentials_sent_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    role, credentials_sent, credentials_sent_at, year_level, is_deployed,
+                    last_academic_year, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 clean_name, student_num, emp_id, email, phone, department,
                 position, notes, temp_pwd, pwd_hash, salt, account_id,
-                role, cred_sent, cred_sent_at, now_str, now_str
+                role, cred_sent, cred_sent_at, year_level, is_deployed,
+                current_ay, now_str, now_str
             ))
 
         updated_row = conn.execute("SELECT * FROM users WHERE name = ?", (clean_name,)).fetchone()

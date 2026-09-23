@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, Clock, ShieldCheck, Wifi, WifiOff } from "lucide-react";
 
 import { useLiveFeed } from "@/hooks/useLiveFeed";
+import { resumeBackendCamera } from "@/api";
 import { VideoStage } from "@/components/VideoStage";
 import { Toast } from "@/components/Toast";
 import { Badge } from "@/components/ui/badge";
@@ -51,6 +52,7 @@ export function Kiosk({ onExitKiosk }: KioskProps = {}) {
 
     updateTime();
     const timer = setInterval(updateTime, 1000);
+    resumeBackendCamera().catch(() => {});
     return () => clearInterval(timer);
   }, []);
 

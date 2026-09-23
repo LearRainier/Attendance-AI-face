@@ -93,10 +93,10 @@ DEFAULT_CAMERA_INDEX = 0  # only the fallback: the camera actually in use is
                           # and persisted to data/settings.json. If the saved (or
                           # this default) index isn't among the cameras found at
                           # startup, the first working one is used instead.
-CAMERA_PROBE_MAX_INDEX = 5      # highest device index _probe_cameras() tries
+CAMERA_PROBE_MAX_INDEX = 2      # highest device index _probe_cameras() tries (0..2 covers all typical setups without stalling)
 CAMERA_THUMBNAIL_WIDTH = 160    # preview shown next to each camera in the picker
-CAMERA_WARMUP_ATTEMPTS = 20     # reads allowed before a camera counts as dead
-CAMERA_WARMUP_INTERVAL = 0.1    # ...spaced this far apart (so ...~2s total)
+CAMERA_WARMUP_ATTEMPTS = 5      # reads allowed before a camera counts as dead
+CAMERA_WARMUP_INTERVAL = 0.05   # ...spaced this far apart (so ...~0.25s total)
 
 # Requested capture resolution. Neither detection nor tracking benefits —
 # FaceDetector downscales to DETECTOR_MAX_WIDTH regardless — but the face
@@ -115,16 +115,10 @@ CAMERA_WARMUP_INTERVAL = 0.1    # ...spaced this far apart (so ...~2s total)
 CAPTURE_REQUEST_WIDTH = 1280
 CAPTURE_REQUEST_HEIGHT = 720
 
-# Capture backends to try, in order, for any device index. DirectShow first on
-# Windows: OpenCV defaults to MSMF there, and on hardware like this project's
-# HP TrueVision webcam MSMF *opens* the device happily and then fails every
-# single read (`can't grab frame. Error: -1072875772`), which looks exactly
-# like "the camera is broken" — DirectShow opens the same camera in ~0.5s and
-# streams fine. MSMF is kept as a fallback because the reverse happens too on
-# some UVC devices. This is why the checks below insist on an actual decoded
-# frame rather than trusting isOpened().
+# Capture backends to try, in order, for any device index. MSMF first on
+# Windows for hardware-accelerated 30 FPS at 720p, with DirectShow as fallback.
 CAMERA_BACKENDS = (
-    ((cv2.CAP_DSHOW, "dshow"), (cv2.CAP_MSMF, "msmf"))
+    ((cv2.CAP_MSMF, "msmf"), (cv2.CAP_DSHOW, "dshow"))
     if os.name == "nt" else ((cv2.CAP_ANY, "default"),)
 )
 
@@ -137,7 +131,7 @@ SOURCE_BROWSER = "browser"
 INGEST_FRAME_TIMEOUT = 3.0   # no pushed frame for this long = stream stalled
 INGEST_MAX_FRAME_BYTES = 4_000_000  # reject absurd uploads before decoding
 FRAME_JPEG_QUALITY = 65
-STATE_BROADCAST_INTERVAL = 1 / 25  # ~25fps to connected WebSocket clients (smooth and bandwidth-efficient)
+STATE_BROADCAST_INTERVAL = 1 / 30  # ~30fps to connected WebSocket clients (smooth and bandwidth-efficient)
 FIRST_SCAN_DELAY_SECONDS = 1.5     # hold a track before its first recognition attempt
 RETRY_COOLDOWN_SECONDS = 5.0       # retry Unknown/Error/No-Face tracks this often
 UNKNOWN_SNAPSHOT_COOLDOWN_SECONDS = 20.0
@@ -322,6 +316,7 @@ _shutdown_event = threading.Event()
 # needs to open each index in turn. They're separate events so clearing one
 # can't resume the loop while the other still needs the camera free.
 _camera_paused = threading.Event()
+_camera_paused_time = 0.0
 _camera_scan_hold = threading.Event()
 _camera_scan_lock = threading.Lock()
 _worker = None
@@ -517,6 +512,60 @@ def _encode_thumbnail(frame):
     return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
 
 
+class ThreadedVideoCapture:
+    """Wraps cv2.VideoCapture in a dedicated grabber thread.
+
+    Decouples camera hardware frame acquisition from the main camera loop,
+    ensuring frames are read at hardware speed without waiting on detection
+    and processing, and eliminating driver buffer queue backlog.
+    """
+    def __init__(self, capture, first_frame=None):
+        self.capture = capture
+        self.running = True
+        self.frame = first_frame
+        self.ret = first_frame is not None
+        self.frame_id = 1 if first_frame is not None else 0
+        self._last_read_id = -1
+        self.cond = threading.Condition()
+        self.thread = threading.Thread(target=self._reader, daemon=True, name="CameraGrabberThread")
+        self.thread.start()
+
+    def _reader(self):
+        while self.running:
+            if not self.capture.isOpened():
+                break
+            ret, frame = self.capture.read()
+            with self.cond:
+                self.ret = ret
+                if ret and frame is not None:
+                    self.frame = frame
+                    self.frame_id += 1
+                self.cond.notify_all()
+            if not ret:
+                time.sleep(0.01)
+
+    def read(self, timeout=0.2):
+        with self.cond:
+            if self.running and self.frame_id == self._last_read_id:
+                self.cond.wait(timeout=timeout)
+            self._last_read_id = self.frame_id
+            return self.ret, self.frame
+
+    def isOpened(self):
+        return self.running and self.capture.isOpened()
+
+    def release(self):
+        self.running = False
+        with self.cond:
+            self.cond.notify_all()
+        if self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+        try:
+            self.capture.release()
+        except Exception:
+            pass
+
+
 def _open_capture(index):
     """Open device ``index`` on the first backend that both opens it *and*
     hands back a real frame, giving the camera a moment to wake up.
@@ -537,21 +586,41 @@ def _open_capture(index):
             capture.release()
             continue
 
-        # Request hardware MJPG compression and 30fps to avoid 5fps USB 2.0 uncompressed bottlenecks
-        try:
-            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-        except Exception:
-            pass
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_REQUEST_WIDTH)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_REQUEST_HEIGHT)
-        try:
-            capture.set(cv2.CAP_PROP_FPS, 30)
-        except Exception:
-            pass
+        if backend_name == "msmf":
+            # In MSMF, setting only width to 1280 negotiates 1280x720 @ 30 FPS in a single step,
+            # avoiding multiple redundant MediaFoundation topology rebuilds.
+            try:
+                capture.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_REQUEST_WIDTH)
+            except Exception:
+                pass
+        else:
+            try:
+                capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            except Exception:
+                pass
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_REQUEST_WIDTH)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_REQUEST_HEIGHT)
+            try:
+                capture.set(cv2.CAP_PROP_FPS, 30)
+            except Exception:
+                pass
+            try:
+                capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
 
         for _ in range(CAMERA_WARMUP_ATTEMPTS):
             ok, frame = capture.read()
             if ok and frame is not None:
+                actual_w = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+                actual_h = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                actual_fps = capture.get(cv2.CAP_PROP_FPS)
+                fourcc = int(capture.get(cv2.CAP_PROP_FOURCC))
+                fourcc_str = "".join([chr((fourcc >> 8 * i) & 0xFF) for i in range(4)])
+                logger.info(
+                    "Camera %d opened via %s: %dx%d @ %.1f FPS (FOURCC: '%s')",
+                    index, backend_name, actual_w, actual_h, actual_fps, fourcc_str
+                )
                 return capture, backend_name, frame
             time.sleep(CAMERA_WARMUP_INTERVAL)
 
@@ -757,6 +826,14 @@ def camera_loop():
                     _refresh_broadcast_payload()
 
             if source == SOURCE_LOCAL and release_requested:
+                # If paused for registration, auto-resume after 45s so the kiosk never gets permanently stuck
+                global _camera_paused_time
+                if _camera_paused.is_set() and _camera_paused_time > 0 and (time.time() - _camera_paused_time > 45.0):
+                    logger.info("Camera pause expired after 45s of inactivity. Auto-resuming kiosk camera feed.")
+                    _camera_paused.clear()
+                    _camera_paused_time = 0.0
+                    continue
+
                 # Paused for registration or a device scan. Keep the view
                 # blank, but only publish that once — see the flicker note.
                 with state.lock:
@@ -815,10 +892,9 @@ def camera_loop():
                 # of being told the camera is already free.
                 with state.lock:
                     state.camera_held = True
-                # The warm-up frame _open_capture already pulled is discarded:
-                # the read below is a fresh one a few milliseconds later.
-                video_capture, backend_name, _ = _open_capture(desired_index)
-                if video_capture is None:
+                # Open the camera and wrap it in a dedicated threaded frame grabber
+                raw_capture, backend_name, first_frame = _open_capture(desired_index)
+                if raw_capture is None:
                     logger.error("Camera %d cannot be accessed. Retrying...", desired_index)
                     with state.lock:
                         state.camera_held = False
@@ -830,14 +906,29 @@ def camera_loop():
                         _refresh_broadcast_payload()
                     time.sleep(1.0)
                     continue
+                video_capture = ThreadedVideoCapture(raw_capture, first_frame)
                 open_index = desired_index
-                logger.info("Camera %d (re)acquired via %s.", desired_index, backend_name)
+                logger.info("Camera %d (re)acquired via %s (threaded grabber active).", desired_index, backend_name)
                 consecutive_read_failures = 0
+                thumb = _encode_thumbnail(first_frame) if first_frame is not None else None
                 with state.lock:
                     state.camera_active = True
                     state.camera_held = True
                     state.camera_open_index = desired_index
                     state.camera_error = None
+                    cam_entry = {
+                        "index": desired_index,
+                        "width": int(first_frame.shape[1]) if first_frame is not None else CAPTURE_REQUEST_WIDTH,
+                        "height": int(first_frame.shape[0]) if first_frame is not None else CAPTURE_REQUEST_HEIGHT,
+                        "backend": backend_name,
+                        "thumbnail": thumb,
+                    }
+                    if not any(c.get("index") == desired_index for c in state.cameras):
+                        state.cameras.append(cam_entry)
+                    else:
+                        for c in state.cameras:
+                            if c.get("index") == desired_index:
+                                c.update(cam_entry)
 
             if source == SOURCE_LOCAL:
                 if video_capture is None:
@@ -1098,33 +1189,20 @@ async def lifespan(app: FastAPI):
     _reload_registered_faces()
     logger.info("Database loaded. (%d user(s) registered)", state.registered_count)
 
-    # Enumerate cameras before the camera thread starts, so probing never
-    # fights the live feed for the device. The dashboard's picker uses this
-    # list; /api/cameras/scan refreshes it later (pausing the feed) if a
-    # camera is plugged in while the server is running.
-    logger.info("Scanning for cameras (indices 0-%d)...", CAMERA_PROBE_MAX_INDEX)
-    cameras = _probe_cameras()
-    available = [camera["index"] for camera in cameras]
-
     saved_index = load_settings().get("camera_index")
     selected_index = saved_index if isinstance(saved_index, int) else DEFAULT_CAMERA_INDEX
-    if available and selected_index not in available:
-        # Don't persist this fallback — if the preferred camera comes back on
-        # a later run, we should go back to using it.
-        logger.warning(
-            "Camera %d isn't available; falling back to camera %d for this run.",
-            selected_index, available[0],
-        )
-        selected_index = available[0]
 
     with state.lock:
-        state.cameras = cameras
+        state.cameras = [{
+            "index": selected_index,
+            "width": CAPTURE_REQUEST_WIDTH,
+            "height": CAPTURE_REQUEST_HEIGHT,
+            "backend": "dshow" if os.name == "nt" else "default",
+            "thumbnail": None,
+        }]
         state.camera_index = selected_index
-    logger.info(
-        "Cameras found: %s. Using camera %d.",
-        ", ".join(f"{c['index']} ({c['width']}x{c['height']}, {c['backend']})" for c in cameras)
-        if cameras else "none", selected_index,
-    )
+
+    logger.info("Launching camera pipeline with camera %d...", selected_index)
 
     _worker = FaceRecognitionWorker(tracker.tracks, tracks_lock, state)
     _worker.start()
@@ -1294,6 +1372,7 @@ class RegisterRequest(BaseModel):
     student_number: str = ""
     email: str = ""
     department: str = ""
+    year_level: int = 1
     image_b64: str  # raw base64 or a data: URL from a <canvas>.toDataURL()
 
 
@@ -1351,11 +1430,15 @@ def api_register(payload: RegisterRequest):
         pwd_hash = _hash_password(temp_password, salt)
         email_status = "pending"
 
+    raw_yl = getattr(payload, "year_level", 1)
+    year_level = max(1, min(4, int(raw_yl or 1)))
+
     profile_updates = {
         "student_number": student_num or existing_profile.get("student_number", ""),
         "employee_id": student_num or existing_profile.get("employee_id", ""),
         "email": email or existing_profile.get("email", ""),
         "department": payload.department.strip() or existing_profile.get("department", ""),
+        "year_level": year_level,
         "account_id": student_num or clean_name,
         "salt": salt,
         "password_hash": pwd_hash,
@@ -1436,6 +1519,8 @@ class UserProfileRequest(BaseModel):
     email: str = ""
     phone: str = ""
     department: str = ""
+    year_level: int = 1
+    is_deployed: bool = False
     position: str = ""
     student_number: str = ""
     employee_id: str = ""
@@ -1462,6 +1547,8 @@ def api_list_users():
             "email": profile.get("email", ""),
             "phone": profile.get("phone", ""),
             "department": profile.get("department", ""),
+            "year_level": int(profile.get("year_level", 1) or 1),
+            "is_deployed": bool(profile.get("is_deployed", 0)),
             "position": profile.get("position", ""),
             "student_number": student_num,
             "employee_id": student_num,
@@ -1479,6 +1566,11 @@ def api_save_user(payload: UserProfileRequest):
             data["employee_id"] = data["student_number"]
         elif data.get("employee_id") and not data.get("student_number"):
             data["student_number"] = data["employee_id"]
+        # Enforce that is_deployed is only valid for BSSW year 4
+        dept = data.get("department", "").strip()
+        yl = int(data.get("year_level", 1) or 1)
+        if dept != "BSSW" or yl != 4:
+            data["is_deployed"] = False
         profile = save_user_profile(payload.name, data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1733,6 +1825,9 @@ def api_analytics_summary(
     users = load_user_profiles()
     registered_names = sorted(list(users.keys()))
     registered_count = len(registered_names)
+    # Deployed students are not required to log in daily:
+    active_registered_names = [u for u in registered_names if not users.get(u, {}).get("is_deployed")]
+    active_registered_count = len(active_registered_names) if active_registered_names else registered_count
 
     now = get_pht_now()
     if period == "week":
@@ -1796,7 +1891,7 @@ def api_analytics_summary(
         total_late_all += late_count
 
         attendee_count = len(unique_users)
-        rate = round((attendee_count / registered_count * 100), 1) if registered_count > 0 else 0.0
+        rate = round((attendee_count / active_registered_count * 100), 1) if active_registered_count > 0 else 0.0
 
         heatmap_days.append({
             "date": d_str,
@@ -1834,7 +1929,7 @@ def api_analytics_summary(
         for u in sorted(user_logins.keys(), key=lambda x: (-user_logins.get(x, 0), x))
     ][:15]
 
-    # Top 15 users with lowest logins (includes 0-login registered users)
+    # Top 15 users with lowest logins (excluding deployed users who are not required to log in daily)
     top_lowest_logins = [
         {
             "name": u,
@@ -1843,6 +1938,7 @@ def api_analytics_summary(
             "clean": user_clean.get(u, 0),
         }
         for u in sorted(user_logins.keys(), key=lambda x: (user_logins.get(x, 0), x))
+        if not users.get(u, {}).get("is_deployed")
     ][:15]
 
     # Top 15 users with most lates
@@ -1967,7 +2063,9 @@ async def api_camera_pause():
     getUserMedia (used by the Register page) can acquire it. Waits briefly
     for camera_loop to actually confirm the release before responding, so
     the frontend doesn't race ahead and try to open the camera too early."""
+    global _camera_paused_time
     _camera_paused.set()
+    _camera_paused_time = time.time()
     for _ in range(40):  # up to ~2s
         with state.lock:
             if not state.camera_held:
@@ -1979,7 +2077,9 @@ async def api_camera_pause():
 @app.post("/api/camera/resume")
 async def api_camera_resume():
     """Let the backend reacquire the webcam for the live dashboard feed."""
+    global _camera_paused_time
     _camera_paused.clear()
+    _camera_paused_time = 0.0
     return {"paused": False}
 
 

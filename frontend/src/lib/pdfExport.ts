@@ -413,7 +413,7 @@ function renderRankCard(
   doc.setFontSize(7.5);
   doc.text(title, x + 3, y + 4.8);
 
-  doc.setTextColor(240, 240, 240);
+  doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(6);
   doc.text(subtitle, x + 3, y + 10.5);
@@ -522,10 +522,12 @@ export async function exportIndividualDtrPdf({
   doc.roundedRect(margin, y, contentWidth, 20, 2, 2, "FD");
 
   const colW = contentWidth / 3;
+  const ylLabel = userProfile?.year_level ? ` - Yr ${userProfile.year_level}` : "";
+  const deployedLabel = userProfile?.is_deployed ? " (Deployed)" : "";
   const fields = [
     { label: "NAME", val: userName },
     { label: "STUDENT ID", val: userProfile?.student_number || userProfile?.employee_id || "N/A" },
-    { label: "COURSE", val: userProfile?.department || "N/A" },
+    { label: "COURSE & YEAR", val: `${userProfile?.department || "N/A"}${ylLabel}${deployedLabel}` },
   ];
 
   fields.forEach((f, i) => {

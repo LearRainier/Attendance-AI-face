@@ -37,6 +37,8 @@ export interface UserProfile {
   email: string;
   phone: string;
   department: string;
+  year_level?: number;
+  is_deployed?: boolean;
   position: string;
   employee_id: string;
   notes: string;
@@ -49,6 +51,8 @@ export interface UserProfileInput {
   email?: string;
   phone?: string;
   department?: string;
+  year_level?: number;
+  is_deployed?: boolean;
   position?: string;
   employee_id?: string;
   notes?: string;
@@ -74,7 +78,8 @@ export async function registerFace(
   imageB64: string,
   studentNumber: string = "",
   email: string = "",
-  department: string = ""
+  department: string = "",
+  yearLevel: number = 1
 ): Promise<RegisterResponse> {
   const res = await fetch("/api/register", {
     method: "POST",
@@ -84,6 +89,7 @@ export async function registerFace(
       student_number: studentNumber,
       email,
       department,
+      year_level: yearLevel,
       image_b64: imageB64,
     }),
   });

@@ -17,6 +17,7 @@ export function Register() {
   const [studentNumber, setStudentNumber] = useState("");
   const [email, setEmail] = useState("");
   const [department, setDepartment] = useState<string>("BSCS");
+  const [yearLevel, setYearLevel] = useState<number>(1);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -59,15 +60,16 @@ export function Register() {
         imageB64,
         studentNumber.trim(),
         email.trim(),
-        department.trim()
+        department.trim(),
+        yearLevel
       );
       if (result.email_status === "already_sent" || result.template_count > 1) {
         setMessage(
-          `Registered ${result.name} (${studentNumber.trim()} · ${department}). Face template #${result.template_count} saved (existing credentials preserved).`
+          `Registered ${result.name} (${studentNumber.trim()} · ${department} - Year ${yearLevel}). Face template #${result.template_count} saved (existing credentials preserved).`
         );
       } else {
         setMessage(
-          `Registered ${result.name} (${studentNumber.trim()} · ${department}). Face template #${result.template_count} saved. Credentials sent to ${email.trim()}.`
+          `Registered ${result.name} (${studentNumber.trim()} · ${department} - Year ${yearLevel}). Face template #${result.template_count} saved. Credentials sent to ${email.trim()}.`
         );
       }
       refreshStatus();
@@ -90,7 +92,7 @@ export function Register() {
             <CardTitle>Student Information & Face Capture</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="register-student-no">Student Number</Label>
                 <Input
@@ -116,6 +118,21 @@ export function Register() {
                       {dept}
                     </option>
                   ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="register-year-level">Year Level</Label>
+                <select
+                  id="register-year-level"
+                  value={yearLevel}
+                  onChange={(e) => setYearLevel(Number(e.target.value))}
+                  className="border-input flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 font-medium cursor-pointer"
+                >
+                  <option value={1}>1st Year</option>
+                  <option value={2}>2nd Year</option>
+                  <option value={3}>3rd Year</option>
+                  <option value={4}>4th Year</option>
                 </select>
               </div>
             </div>
