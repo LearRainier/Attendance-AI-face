@@ -757,6 +757,7 @@ def camera_loop():
                         state.schedule_message = None
                         if state.camera_error in (
                             "login is currently closed as 6:30 AM has passed.",
+                            "login is currently closed as 7:31 AM has passed.",
                             "login is currently closed as 8:00 AM has passed.",
                             "login is currently closed. Attendance is not active on Sundays.",
                         ):

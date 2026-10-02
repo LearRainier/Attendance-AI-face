@@ -44,18 +44,28 @@ def test_rules():
     assert "Check-in closed. Attendance cutoff was 6:30 AM." in msg, f"Expected specific msg without PHT, got {msg}"
 
     # 6. Saturday (2026-09-05 is Saturday, weekday == 5)
-    # Should NOT be late and should NOT be rejected
+    # 2:00 AM - 6:30 AM is clean
     dt_sat_early = datetime(2026, 9, 5, 4, 30, 0)
     allowed, status, msg = evaluate_checkin_time(dt_sat_early)
     assert allowed is True and status == "ON_TIME"
 
-    dt_sat_late_hour = datetime(2026, 9, 5, 5, 30, 0)
-    allowed, status, msg = evaluate_checkin_time(dt_sat_late_hour)
-    assert allowed is True and status == "ON_TIME", f"Saturday 5:30 should be ON_TIME, got {status}"
+    dt_sat_clean_edge = datetime(2026, 9, 5, 6, 30, 0)
+    allowed, status, msg = evaluate_checkin_time(dt_sat_clean_edge)
+    assert allowed is True and status == "ON_TIME", f"Saturday 6:30 AM should be ON_TIME, got {status}"
 
-    dt_sat_past_cutoff = datetime(2026, 9, 5, 8, 0, 0)
+    # 6:31 AM - 7:30 AM is late
+    dt_sat_late_start = datetime(2026, 9, 5, 6, 31, 0)
+    allowed, status, msg = evaluate_checkin_time(dt_sat_late_start)
+    assert allowed is True and status == "LATE", f"Saturday 6:31 AM should be LATE, got {status}"
+
+    dt_sat_late_end = datetime(2026, 9, 5, 7, 30, 59)
+    allowed, status, msg = evaluate_checkin_time(dt_sat_late_end)
+    assert allowed is True and status == "LATE", f"Saturday 7:30:59 AM should be LATE, got {status}"
+
+    # At 7:31 AM beyond -> Rejected
+    dt_sat_past_cutoff = datetime(2026, 9, 5, 7, 31, 0)
     allowed, status, msg = evaluate_checkin_time(dt_sat_past_cutoff)
-    assert allowed is True and status == "ON_TIME", f"Saturday 8:00 AM should be ON_TIME, got {status}"
+    assert allowed is False and status == "REJECTED", f"Saturday 7:31 AM should be REJECTED, got {status}"
 
     print("All late rule test cases passed successfully!")
 

@@ -114,7 +114,7 @@ class TestCameraSchedule(ScheduleOnTestCase):
         self.assertTrue(chk_allowed)
         self.assertEqual(status, "ON_TIME")
 
-        # 3. 07:00:00 AM (past weekday 6:30 AM cutoff) -> Open on Saturday!
+        # 3. 07:00:00 AM (past 6:30 AM clean cutoff, in 6:31 - 7:30 late window) -> Open & LATE!
         dt_sat_mid = datetime(2026, 9, 12, 7, 0, 0, tzinfo=PHT)
         allowed, msg = is_camera_allowed(dt_sat_mid)
         self.assertTrue(allowed)
@@ -122,18 +122,18 @@ class TestCameraSchedule(ScheduleOnTestCase):
 
         chk_allowed, status, _ = evaluate_checkin_time(dt_sat_mid)
         self.assertTrue(chk_allowed)
-        self.assertEqual(status, "ON_TIME")
+        self.assertEqual(status, "LATE")
 
-        # 4. 08:00:00 AM -> Saturday cutoff edge
-        dt_sat_edge = datetime(2026, 9, 12, 8, 0, 0, tzinfo=PHT)
+        # 4. 07:30:59 AM -> Within late window, still allowed
+        dt_sat_edge = datetime(2026, 9, 12, 7, 30, 59, tzinfo=PHT)
         allowed, msg = is_camera_allowed(dt_sat_edge)
         self.assertTrue(allowed)
 
-        # 5. 08:00:01 AM -> Closed on Saturday! Camera disabled!
-        dt_sat_closed = datetime(2026, 9, 12, 8, 0, 1, tzinfo=PHT)
+        # 5. 07:31:00 AM -> Closed on Saturday! Camera disabled!
+        dt_sat_closed = datetime(2026, 9, 12, 7, 31, 0, tzinfo=PHT)
         allowed, msg = is_camera_allowed(dt_sat_closed)
         self.assertFalse(allowed)
-        self.assertIn("8:00 AM has passed", msg)
+        self.assertIn("7:31 AM has passed", msg)
 
         chk_allowed, status, _ = evaluate_checkin_time(dt_sat_closed)
         self.assertFalse(chk_allowed)
@@ -195,17 +195,31 @@ class TestScheduleDisabled(unittest.TestCase):
             self.assertEqual(status, "LATE")
 
     def test_late_boundary_still_applies(self):
-        # 05:14:59 -> on time, 05:15:00 -> late, on every day of the week.
+        # On non-Saturdays: 05:14:59 -> on time, 05:15:00 -> late
+        # On Saturdays: clean until 6:30:00, 6:31:00 -> late
         for day in range(7):
             date = datetime(2026, 9, 7 + day, 5, 14, 59, tzinfo=PHT)
             allowed, status, _ = evaluate_checkin_time(date, schedule_enabled=False)
             self.assertTrue(allowed)
             self.assertEqual(status, "ON_TIME", f"05:14:59 should be on time (weekday {date.weekday()})")
 
-            date = date.replace(second=0, minute=15)
-            allowed, status, _ = evaluate_checkin_time(date, schedule_enabled=False)
-            self.assertTrue(allowed)
-            self.assertEqual(status, "LATE", f"05:15:00 should be late (weekday {date.weekday()})")
+            if date.weekday() == 5:
+                # Saturday clean until 6:30:00
+                date_clean = date.replace(hour=6, minute=30, second=0)
+                allowed, status, _ = evaluate_checkin_time(date_clean, schedule_enabled=False)
+                self.assertTrue(allowed)
+                self.assertEqual(status, "ON_TIME", "Saturday 06:30:00 should be on time")
+
+                # Saturday late after 6:30:00
+                date_late = date.replace(hour=6, minute=31, second=0)
+                allowed, status, _ = evaluate_checkin_time(date_late, schedule_enabled=False)
+                self.assertTrue(allowed)
+                self.assertEqual(status, "LATE", "Saturday 06:31:00 should be late")
+            else:
+                date_late = date.replace(second=0, minute=15)
+                allowed, status, _ = evaluate_checkin_time(date_late, schedule_enabled=False)
+                self.assertTrue(allowed)
+                self.assertEqual(status, "LATE", f"05:15:00 should be late (weekday {date.weekday()})")
 
     def test_before_opening_hour_counts_as_on_time(self):
         # 01:00 AM is outside the 2:00-6:30 window but earlier than the late

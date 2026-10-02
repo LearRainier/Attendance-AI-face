@@ -3,6 +3,7 @@ import {
   Calendar,
   CheckCircle2,
   Clock,
+  Download,
   LogIn,
   LogOut,
   Search,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 
 import type { AttendanceRecord, HeatmapDay } from "@/api";
+import { exportDayAttendancePdf } from "@/lib/pdfExport";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -49,7 +51,20 @@ export function DayAttendanceModal({
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ON_TIME" | "LATE">("ALL");
   const [page, setPage] = useState(1);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const pageSize = 10;
+
+  const handleExportPdf = async () => {
+    if (!day) return;
+    try {
+      setExportingPdf(true);
+      await exportDayAttendancePdf(day.date, records);
+    } catch (err) {
+      console.error("Failed to export day PDF:", err);
+    } finally {
+      setExportingPdf(false);
+    }
+  };
 
   // Filter records for this day and search criteria
   const dayRecords = useMemo(() => {
@@ -87,18 +102,32 @@ export function DayAttendanceModal({
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-0 gap-0 overflow-hidden">
         {/* Header */}
         <DialogHeader className="px-6 pt-6 pb-4 border-b bg-card/60 backdrop-blur-sm">
-          <div className="flex items-center gap-2.5">
-            <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Calendar className="size-4.5" />
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2.5">
+              <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Calendar className="size-4.5" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-bold tracking-tight">
+                  {formattedDate}
+                </DialogTitle>
+                <DialogDescription className="text-xs">
+                  Attendance logs and entry timestamps for this date
+                </DialogDescription>
+              </div>
             </div>
-            <div>
-              <DialogTitle className="text-base font-bold tracking-tight">
-                {formattedDate}
-              </DialogTitle>
-              <DialogDescription className="text-xs">
-                Attendance logs and entry timestamps for this date
-              </DialogDescription>
-            </div>
+
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 text-xs font-semibold shrink-0 cursor-pointer border-border hover:bg-muted mr-8"
+              onClick={handleExportPdf}
+              disabled={exportingPdf}
+              title="Export this day's attendance as PDF"
+            >
+              <Download className="size-3.5" />
+              <span>{exportingPdf ? "Exporting…" : "Export Day PDF"}</span>
+            </Button>
           </div>
 
           {/* Quick Metrics Badges */}

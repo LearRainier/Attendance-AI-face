@@ -593,8 +593,8 @@ def is_camera_allowed(
     - Sundays (pht_dt.weekday() == 6):
         Camera disabled all day. "login is currently closed. Attendance is not active on Sundays."
     - Saturdays (pht_dt.weekday() == 5):
-        Active from 2:00 AM up to 8:00 AM.
-        Closed at and after 8:00 AM: "login is currently closed as 8:00 AM has passed."
+        Active from 2:00 AM up to 7:31 AM (2:00 AM – 6:30 AM clean, 6:31 AM – 7:30 AM late).
+        Closed at and after 7:31 AM: "login is currently closed as 7:31 AM has passed."
         Closed before 2:00 AM: "login is currently closed as 6:30 AM has passed."
     - Monday through Friday (pht_dt.weekday() in [0, 1, 2, 3, 4]):
         Active from 02:00:00 AM to 06:30:00 AM.
@@ -610,18 +610,18 @@ def is_camera_allowed(
     sec_of_day = pht_dt.hour * 3600 + pht_dt.minute * 60 + pht_dt.second
     START_SEC = 2 * 3600             # 02:00:00 AM = 7200 sec
     WEEKDAY_CUTOFF_SEC = 6 * 3600 + 30 * 60  # 06:30:00 AM = 23400 sec
-    SATURDAY_CUTOFF_SEC = 8 * 3600   # 08:00:00 AM = 28800 sec
+    SATURDAY_CUTOFF_SEC = 7 * 3600 + 31 * 60  # 07:31:00 AM = 27060 sec
 
     # 1. Sunday rule: Camera disabled all day
     if weekday == 6:
         return False, "login is currently closed. Attendance is not active on Sundays."
 
-    # 2. Saturday rule: Active between 2:00 AM and 8:00 AM
+    # 2. Saturday rule: Active between 2:00 AM and 7:31 AM
     if weekday == 5:
         if sec_of_day < START_SEC:
             return False, "login is currently closed as 6:30 AM has passed."
-        elif sec_of_day > SATURDAY_CUTOFF_SEC:
-            return False, "login is currently closed as 8:00 AM has passed."
+        elif sec_of_day >= SATURDAY_CUTOFF_SEC:
+            return False, "login is currently closed as 7:31 AM has passed."
         return True, None
 
     # 3. Monday through Friday: Active between 2:00 AM and 6:30 AM
@@ -645,8 +645,11 @@ def evaluate_checkin_time(
 
     Rules:
     - Sundays (pht_dt.weekday() == 6): Attendance is not needed. No one can log on Sunday.
-    - Saturdays (pht_dt.weekday() == 5): Active from 02:00 AM to 08:00 AM Clean ("ON_TIME").
-      Beyond 08:00 AM: Rejected ("REJECTED").
+    - Saturdays (pht_dt.weekday() == 5):
+      - Before 02:00:00: Closed ("REJECTED")
+      - 02:00:00 up to 06:30:00: Clean ("ON_TIME")
+      - 06:30:01 up to 07:30:59: Late ("LATE")
+      - At 07:31:00 and beyond: Rejected ("REJECTED") - check-in closed.
     - Monday through Friday:
       - Before 02:00:00: Closed ("REJECTED")
       - 02:00:00 up to 05:14:59: Clean ("ON_TIME")
@@ -663,11 +666,15 @@ def evaluate_checkin_time(
     START_SEC = 2 * 3600                  # 02:00:00 = 7200
     WEEKDAY_CUTOFF_SEC = 6 * 3600 + 30 * 60  # 06:30:00 = 23400
     LATE_START_SEC = 5 * 3600 + 15 * 60   # 05:15:00 = 18900
-    SATURDAY_CUTOFF_SEC = 8 * 3600        # 08:00:00 = 28800
+    SATURDAY_CUTOFF_SEC = 7 * 3600 + 31 * 60  # 07:31:00 = 27060
 
     # 0. Master switch off: accept every check-in, on every day, but still
-    #    mark the ones from 05:15 AM onwards as late.
+    #    mark tardiness.
     if not schedule_enabled:
+        if pht_dt.weekday() == 5:
+            if sec_of_day > WEEKDAY_CUTOFF_SEC:
+                return True, "LATE", "Logged IN (Saturday Late)"
+            return True, "ON_TIME", "Logged IN (Saturday Schedule)"
         if sec_of_day >= LATE_START_SEC:
             return True, "LATE", "Logged IN (Late)"
         return True, "ON_TIME", "Logged IN (On Time)"
@@ -676,13 +683,17 @@ def evaluate_checkin_time(
     if pht_dt.weekday() == 6:
         return False, "SUNDAY_CLOSED", "Attendance is not active on Sundays. Check-in closed."
 
-    # 2. Saturday rule: active between 2:00 AM and 8:00 AM (Clean/ON_TIME)
+    # 2. Saturday rule:
+    # 2:00 AM - 6:30 AM clean, 6:31 AM - 7:30 AM late, 7:31 AM beyond closed
     if pht_dt.weekday() == 5:
         if sec_of_day < START_SEC:
-            return False, "REJECTED", "Check-in closed."
-        elif sec_of_day > SATURDAY_CUTOFF_SEC:
-            return False, "REJECTED", "Check-in closed. Attendance cutoff was 8:00 AM."
-        return True, "ON_TIME", "Logged IN (Saturday Schedule)"
+            return False, "REJECTED", "Check-in closed. Attendance opens at 2:00 AM."
+        elif sec_of_day >= SATURDAY_CUTOFF_SEC:
+            return False, "REJECTED", "Check-in closed. Attendance cutoff was 7:31 AM."
+        elif sec_of_day > WEEKDAY_CUTOFF_SEC:
+            return True, "LATE", "Logged IN (Saturday Late)"
+        else:
+            return True, "ON_TIME", "Logged IN (Saturday Schedule)"
 
     # 3. Monday through Friday
     if sec_of_day < START_SEC:

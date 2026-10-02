@@ -119,7 +119,10 @@ export function VideoStage({
 
   if (isClosed) {
     const isSunday = scheduleMessage?.toLowerCase().includes("sunday");
-    const isSaturday = scheduleMessage?.toLowerCase().includes("8:00");
+    const isSaturday =
+      scheduleMessage?.toLowerCase().includes("7:31") ||
+      scheduleMessage?.toLowerCase().includes("8:00") ||
+      scheduleMessage?.toLowerCase().includes("saturday");
     const reopeningInfo = isSunday
       ? "Attendance is not active on Sundays."
       : isSaturday

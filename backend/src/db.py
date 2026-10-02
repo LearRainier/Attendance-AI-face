@@ -344,9 +344,12 @@ def _infer_attendance_status(ts_str: str) -> str:
     try:
         from datetime import datetime
         dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-        # Rule not applied on Saturdays (weekday 5)
+        # Saturday (weekday 5): 2:00 - 6:30 clean, 6:31 - 7:30 late
         if dt.weekday() == 5:
-            return "ON_TIME"
+            sec = dt.hour * 3600 + dt.minute * 60 + dt.second
+            if sec <= 23400:  # 06:30:00
+                return "ON_TIME"
+            return "LATE"
         sec = dt.hour * 3600 + dt.minute * 60 + dt.second
         if sec < 18900:  # before 05:15:00
             return "ON_TIME"
