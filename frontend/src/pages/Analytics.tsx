@@ -505,7 +505,7 @@ export function Analytics() {
                   <CardTitle className="text-sm font-semibold">Top 15 Most Lates</CardTitle>
                 </div>
                 <CardDescription className="text-xs">
-                  Frequent tardiness (5:15 AM – 6:30 AM non-Saturdays)
+                  Frequent tardiness (5:15 AM – 6:30 AM weekdays, 6:31 AM – 7:30 AM Saturdays)
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-0 flex-1 max-h-96 overflow-y-auto">

@@ -1,5 +1,5 @@
 import { jsPDF } from "jspdf";
-import type { AnalyticsSummary, UserProfile } from "@/api";
+import type { AnalyticsSummary, UserProfile, AttendanceRecord } from "@/api";
 
 // Strict Color Palette matching user guidelines:
 // - Black (for headers, banners, text, numbers, labels, lines, borders)
@@ -1015,4 +1015,264 @@ export async function exportIndividualDtrPdf({
 
   const safeName = userName.replace(/[^a-zA-Z0-9_-]/g, "_");
   doc.save(`DTR_${safeName}_${month}.pdf`);
+}
+
+/**
+ * Export Single-Day Attendance Log to PDF.
+ * Matches existing system design pattern:
+ * - Solid black banner with crisp white typography
+ * - Institutional logo watermark (7% opacity)
+ * - Clean date indicator box
+ * - Table of students that logged in sorted by time (only lists Name and Logged In Time)
+ * - Single signature line at the bottom with the text "MG Coordinator" below it
+ */
+export async function exportDayAttendancePdf(
+  dayDate: string,
+  records: AttendanceRecord[]
+): Promise<void> {
+  const doc = new jsPDF({
+    orientation: "portrait",
+    unit: "mm",
+    format: "a4",
+  });
+
+  const pageWidth = 210;
+  const pageHeight = 297;
+  const margin = 14;
+  const contentWidth = pageWidth - margin * 2;
+
+  // Format Date Strings
+  const dateObj = new Date(dayDate + "T00:00:00");
+  const formattedLongDate = dateObj.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+  const formattedShortDate = dateObj.toLocaleDateString("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+  }).toUpperCase();
+
+  // Filter and sort students who logged in on this day
+  const dayInRecords = records.filter(
+    (r) => r.timestamp.startsWith(dayDate) && (!r.type || r.type === "IN")
+  );
+
+  // Deduplicate per student (earliest check-in)
+  const studentMap = new Map<string, AttendanceRecord>();
+  dayInRecords.forEach((r) => {
+    const existing = studentMap.get(r.name);
+    if (!existing || r.timestamp < existing.timestamp) {
+      studentMap.set(r.name, r);
+    }
+  });
+
+  // Sort strictly by login time ascending
+  const sortedStudents = Array.from(studentMap.values()).sort((a, b) =>
+    a.timestamp.localeCompare(b.timestamp)
+  );
+
+  function formatTime(ts: string): string {
+    const timePart = ts.split(" ")[1] || ts;
+    const parts = timePart.split(":");
+    if (parts.length >= 2) {
+      const hh = parseInt(parts[0], 10);
+      const mm = parts[1];
+      const ss = parts[2] ? `:${parts[2]}` : "";
+      const ampm = hh >= 12 ? "PM" : "AM";
+      const h12 = hh % 12 || 12;
+      return `${h12}:${mm}${ss} ${ampm}`;
+    }
+    return timePart;
+  }
+
+  const tableColW = [16, 114, 52];
+  const tableHeaders = ["#", "Student / Attendee Name", "Time Logged In"];
+  const rowHeight = 7.0;
+
+  function renderPageHeader(pageY: number) {
+    // 1. Header Banner (Solid Black with White Text)
+    doc.setFillColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+    doc.roundedRect(margin, pageY, contentWidth, 22, 2.5, 2.5, "F");
+
+    doc.setTextColor(COLORS.white[0], COLORS.white[1], COLORS.white[2]);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13.5);
+    doc.text("SHC MG FACE ATTENDANCE SYSTEM", margin + 6, pageY + 9);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(230, 230, 230);
+    doc.text("Daily Attendance Log • Facial Recognition Verification", margin + 6, pageY + 15.5);
+
+    // Date Box (White Box with Black Text on Right)
+    doc.setFillColor(COLORS.white[0], COLORS.white[1], COLORS.white[2]);
+    doc.roundedRect(pageWidth - margin - 54, pageY + 4, 48, 14, 2, 2, "F");
+    doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    doc.text("LOG DATE", pageWidth - margin - 30, pageY + 9.5, { align: "center" });
+    doc.setFontSize(8.5);
+    doc.text(formattedShortDate, pageWidth - margin - 30, pageY + 14.5, { align: "center" });
+  }
+
+  function renderTableHeader(headerY: number) {
+    doc.setFillColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+    doc.roundedRect(margin, headerY, contentWidth, 6, 1, 1, "F");
+    doc.setTextColor(COLORS.white[0], COLORS.white[1], COLORS.white[2]);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+
+    let hX = margin;
+    tableHeaders.forEach((hdr, idx) => {
+      const align = idx === 0 || idx === 2 ? "center" : "left";
+      const pad = align === "center" ? tableColW[idx] / 2 : 4;
+      doc.text(hdr, hX + pad, headerY + 4.2, { align });
+      hX += tableColW[idx];
+    });
+  }
+
+  // --- Initial Page Setup ---
+  renderPageHeader(12);
+
+  let y = 38;
+
+  // Date strip / subtitle box
+  doc.setFillColor(COLORS.cardBg[0], COLORS.cardBg[1], COLORS.cardBg[2]);
+  doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2]);
+  doc.roundedRect(margin, y, contentWidth, 11, 1.5, 1.5, "FD");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+  doc.text(`DATE: ${formattedLongDate.toUpperCase()}`, margin + 5, y + 7);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
+  doc.text(`Total Attendees: ${sortedStudents.length}`, pageWidth - margin - 5, y + 7, { align: "right" });
+
+  y += 15;
+
+  // Table Header
+  renderTableHeader(y);
+  y += 6.5;
+
+  // Render Rows
+  if (sortedStudents.length === 0) {
+    doc.setFillColor(COLORS.white[0], COLORS.white[1], COLORS.white[2]);
+    doc.rect(margin, y, contentWidth, 12, "F");
+    doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2]);
+    doc.line(margin, y + 12, margin + contentWidth, y + 12);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
+    doc.text("No student check-ins recorded for this date.", margin + contentWidth / 2, y + 7.5, { align: "center" });
+    y += 14;
+  } else {
+    for (let idx = 0; idx < sortedStudents.length; idx++) {
+      const rec = sortedStudents[idx];
+
+      // Page break check (leave room for signature line on final page or paginate cleanly)
+      if (y + rowHeight > pageHeight - 48) {
+        doc.addPage();
+        renderPageHeader(12);
+        y = 38;
+        renderTableHeader(y);
+        y += 6.5;
+      }
+
+      // Zebra background
+      if (idx % 2 === 1) {
+        doc.setFillColor(249, 250, 251);
+        doc.rect(margin, y, contentWidth, rowHeight, "F");
+      }
+
+      // Border bottom
+      doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2]);
+      doc.line(margin, y + rowHeight, margin + contentWidth, y + rowHeight);
+
+      let rX = margin;
+
+      // Col 0: #
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.5);
+      doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
+      doc.text(String(idx + 1), rX + tableColW[0] / 2, y + 4.5, { align: "center" });
+      rX += tableColW[0];
+
+      // Col 1: Name
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+      doc.text(rec.name, rX + 4, y + 4.5);
+      rX += tableColW[1];
+
+      // Col 2: Time Logged In
+      const timeStr = formatTime(rec.timestamp);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+      doc.text(timeStr, rX + tableColW[2] / 2, y + 4.5, { align: "center" });
+
+      y += rowHeight;
+    }
+  }
+
+  // --- Single Signature Line at the Bottom: "MG Coordinator" ---
+  // Ensure enough room on the current page for the signature block
+  if (y + 30 > pageHeight - 16) {
+    doc.addPage();
+    renderPageHeader(12);
+    y = 38;
+  }
+
+  const sigBlockY = Math.max(y + 14, pageHeight - 45);
+  const sigLineWidth = 65;
+  const sigLineX = pageWidth - margin - sigLineWidth;
+
+  // Single signature line
+  doc.setDrawColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+  doc.setLineWidth(0.35);
+  doc.line(sigLineX, sigBlockY, sigLineX + sigLineWidth, sigBlockY);
+
+  // Text below the signature line: "MG Coordinator"
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(COLORS.black[0], COLORS.black[1], COLORS.black[2]);
+  doc.text("MG Coordinator", sigLineX + sigLineWidth / 2, sigBlockY + 4.5, { align: "center" });
+
+  // --- Footers & Watermarks on all pages ---
+  const totalPages = doc.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+
+    // Footer divider line
+    doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2]);
+    doc.line(margin, pageHeight - 12, pageWidth - margin, pageHeight - 12);
+
+    // Footer text
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.setTextColor(COLORS.textMuted[0], COLORS.textMuted[1], COLORS.textMuted[2]);
+    doc.text(
+      `Generated on ${formatPhtDate()} (PST/PHT) • SHC MG Face Attendance System`,
+      margin,
+      pageHeight - 8
+    );
+    doc.text(
+      `Page ${p} of ${totalPages} • Official System Export`,
+      pageWidth - margin,
+      pageHeight - 8,
+      { align: "right" }
+    );
+
+    // Institutional Logo Watermark
+    await renderLogoWatermark(doc, pageWidth, pageHeight);
+  }
+
+  doc.save(`Attendance_${dayDate}.pdf`);
 }
