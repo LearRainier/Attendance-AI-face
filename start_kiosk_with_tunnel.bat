@@ -107,8 +107,9 @@ if defined CF_EXE (
 )
 
 :: 8. Launch Kiosk in fullscreen
-echo [INFO] Opening Kiosk display in Fullscreen (Press F11 to exit fullscreen)...
-start "" chrome.exe --start-fullscreen http://localhost:8000/kiosk 2>nul || start "" msedge.exe --start-fullscreen http://localhost:8000/kiosk 2>nul || start "" http://localhost:8000/kiosk
+set "KIOSK_PROFILE=%LOCALAPPDATA%\MG_Attendance\kiosk_profile"
+echo [INFO] Opening Kiosk display in Fullscreen (Press Alt+F4 to exit fullscreen)...
+start "" msedge.exe --kiosk http://localhost:8000/kiosk --edge-kiosk-type=fullscreen --no-first-run --no-default-browser-check --user-data-dir="!KIOSK_PROFILE!" 2>nul || start "" chrome.exe --kiosk http://localhost:8000/kiosk --no-first-run --no-default-browser-check --user-data-dir="!KIOSK_PROFILE!" 2>nul || start "" http://localhost:8000/kiosk
 
 echo.
 echo ============================================================
