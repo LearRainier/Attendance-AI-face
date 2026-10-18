@@ -83,7 +83,12 @@ if errorlevel 1 (
     "%VENV_PY%" -m pip install -r requirements.txt
     "%VENV_PY%" -c "!DEPCHECK!"
     if errorlevel 1 (
-        echo [ERROR] Dependency installation failed - see the messages above.
+        echo.
+        echo [ERROR] Python dependency verification failed.
+        echo The exact error is shown above.
+        echo.
+        echo [INFO] Running the TensorFlow check to find the exact cause ...
+        "%VENV_PY%" scripts\check_tensorflow.py
         echo.
         pause
         exit /b 1
@@ -115,7 +120,9 @@ if not exist "%~dp0frontend\dist\index.html" (
 :: 4. Start the server and wait until it really answers.
 :: ------------------------------------------------------------
 echo [INFO] Starting AI Face ID server on http://localhost:%PORT% ...
-start "MG Attendance Backend" /min "%VENV_PY%" -m uvicorn server:app --host 0.0.0.0 --port %PORT%
+:: cmd /k keeps this window open if the server ever exits, so the error
+:: stays on screen instead of vanishing with the window.
+start "MG Attendance Backend" cmd /k "%VENV_PY% -m uvicorn server:app --host 0.0.0.0 --port %PORT% & echo. & echo [BACKEND STOPPED] The server exited. Check backend\data\audit.log for the reason."
 
 echo [INFO] Waiting for the server and AI models to initialise ...
 set "READY=0"
@@ -135,9 +142,16 @@ if errorlevel 1 (
 if "!READY!"=="0" (
     echo.
     echo [ERROR] The server never answered on port %PORT%.
-    echo         The "MG Attendance Backend" window probably closed with an error.
-    echo         Run this command to see it:
-    echo             backend\.venv\Scripts\python.exe -m uvicorn server:app --port %PORT%
+    echo.
+    if exist "data\audit.log" (
+        echo ======================== BACKEND AUDIT LOG ========================
+        powershell -Command "Get-Content data\audit.log -Tail 25"
+        echo ===================================================================
+        echo.
+    )
+    echo To manually run the server in an open terminal and diagnose:
+    echo     cd /d "%~dp0backend"
+    echo     .venv\Scripts\python.exe -m uvicorn server:app --port %PORT%
     echo.
     pause
     exit /b 1

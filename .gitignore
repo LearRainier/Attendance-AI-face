@@ -56,5 +56,3 @@ Thumbs.db
 .idea/
 *.swp
 
-# Backend runtime logs
-backend/logs/

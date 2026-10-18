@@ -7,7 +7,7 @@ Run it on the kiosk PC from the backend folder:
 
 It checks every known cause on Windows, then tries the real import and
 prints the full error with a plain-language hint. A copy of the report is
-saved to backend/logs/tensorflow_check.txt so it can be sent to a developer.
+saved to backend/data/tensorflow_check.txt so it can be sent to a developer.
 """
 
 import ctypes
@@ -19,7 +19,7 @@ import sys
 import traceback
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REPORT_PATH = os.path.join(BACKEND_DIR, "logs", "tensorflow_check.txt")
+REPORT_PATH = os.path.join(BACKEND_DIR, "data", "tensorflow_check.txt")
 
 _out = io.StringIO()
 
@@ -154,7 +154,7 @@ def try_import():
                 say("LIKELY CAUSE: " + hint)
                 break
         else:
-            say("LIKELY CAUSE: not recognised. Send logs/tensorflow_check.txt to the developer.")
+            say("LIKELY CAUSE: not recognised. Send data/tensorflow_check.txt to the developer.")
         return False
 
 

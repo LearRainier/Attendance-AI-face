@@ -64,7 +64,7 @@ if not defined CF_EXE if exist "%~dp0backend\cloudflared.exe" set "CF_EXE=%~dp0b
 echo [INFO] Starting AI Face ID server on http://localhost:8000...
 :: cmd /k keeps this window open if the server ever exits, so the error
 :: stays on screen instead of vanishing with the window.
-start "MG Attendance Backend" /min cmd /k ".venv\Scripts\python.exe -m uvicorn server:app --host 0.0.0.0 --port 8000 & echo. & echo [BACKEND STOPPED] The server exited. Check backend\logs\server.log for the reason."
+start "MG Attendance Backend" /min cmd /k ".venv\Scripts\python.exe -m uvicorn server:app --host 0.0.0.0 --port 8000 & echo. & echo [BACKEND STOPPED] The server exited. Check backend\data\audit.log for the reason."
 
 :: 5. Start Cloudflare Tunnel if installed
 if defined CF_EXE (

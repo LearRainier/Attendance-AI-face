@@ -1,10 +1,18 @@
-# TensorFlow stack pinned to the versions verified working together on the
-# development PC, so every kiosk PC installs the same tested set instead of
-# whatever is newest on the day ("Failed to load the native TensorFlow runtime").
-opencv-python>=4.8.0,<5.0.0 
-numpy>=1.26.0
-tensorflow>=2.15.0
-tf-keras
-deepface>=0.0.93
+# TensorFlow core pinned to the set verified working together on the
+# development PC, so every kiosk PC installs the same TensorFlow instead of
+# whatever is newest on the day ("Failed to load the native TensorFlow
+# runtime" / NumPy C-API mismatch came from mixed versions).
+#
+# NumPy is deliberately a 2.x *range*, not an exact pin and not <2.0:
+#   - TensorFlow 2.21 is built against NumPy 2, and current opencv-python and
+#     ml_dtypes require NumPy >= 2, so capping below 2.0 forces pip back to
+#     old, untested opencv/ml_dtypes releases.
+#   - Exact NumPy 2.5.x needs Python >= 3.12; the kiosk launcher accepts
+#     Python 3.10-3.12, so the range lets pip pick a wheel for that PC.
+opencv-python>=4.8.0,<5.0.0
+numpy>=2.0.0,<3.0.0
+tensorflow==2.21.0
+tf-keras==2.21.0
+deepface==0.0.101
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
