@@ -179,9 +179,11 @@ for %%B in (
 
 if not defined BROWSER_BIN for %%E in (msedge.exe chrome.exe) do if not defined BROWSER_BIN for %%P in (%%E) do if not "%%~$PATH:P"=="" set "BROWSER_BIN=%%~$PATH:P"
 
-echo [INFO] Launching Kiosk display in Fullscreen (Press F11 to exit fullscreen)...
+set "KIOSK_PROFILE=%LOCALAPPDATA%\MG_Attendance\kiosk_profile"
+
+echo [INFO] Launching Kiosk display in Fullscreen (Press Alt+F4 to exit fullscreen)...
 if defined BROWSER_BIN echo [INFO] Browser: !BROWSER_BIN!
-if defined BROWSER_BIN start "" "!BROWSER_BIN!" --app=!KIOSK_URL! --start-fullscreen
+if defined BROWSER_BIN start "" "!BROWSER_BIN!" --kiosk "!KIOSK_URL!" --edge-kiosk-type=fullscreen --no-first-run --no-default-browser-check --user-data-dir="!KIOSK_PROFILE!"
 if not defined BROWSER_BIN echo [WARN] Edge/Chrome not found - opening the default browser instead.
 if not defined BROWSER_BIN start "" "!KIOSK_URL!"
 
