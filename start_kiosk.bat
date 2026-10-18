@@ -163,36 +163,27 @@ if "!READY!"=="0" (
 set "KIOSK_URL=http://localhost:%PORT%/kiosk"
 set "BROWSER_BIN="
 
-if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" (
-    set "BROWSER_BIN="%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe""
-) else if exist "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" (
-    set "BROWSER_BIN="%ProgramFiles%\Microsoft\Edge\Application\msedge.exe""
-) else if exist "%LocalAppData%\Microsoft\Edge\Application\msedge.exe" (
-    set "BROWSER_BIN="%LocalAppData%\Microsoft\Edge\Application\msedge.exe""
-) else if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" (
-    set "BROWSER_BIN="%ProgramFiles%\Google\Chrome\Application\chrome.exe""
-) else if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" (
-    set "BROWSER_BIN="%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe""
-) else if exist "%LocalAppData%\Google\Chrome\Application\chrome.exe" (
-    set "BROWSER_BIN="%LocalAppData%\Google\Chrome\Application\chrome.exe""
-)
+:: Find Edge (preferred) or Chrome. Written without ( ) blocks on purpose:
+:: %ProgramFiles(x86)% expands to "C:\Program Files (x86)", and that ")"
+:: closes an if-block early - cmd then aborts the whole script with
+:: "...msedge.exe was unexpected at this time" and the browser never opens.
+:: !var! (delayed expansion) is expanded after parsing, so it is safe.
+for %%B in (
+    "!ProgramFiles(x86)!\Microsoft\Edge\Application\msedge.exe"
+    "!ProgramFiles!\Microsoft\Edge\Application\msedge.exe"
+    "!LocalAppData!\Microsoft\Edge\Application\msedge.exe"
+    "!ProgramFiles!\Google\Chrome\Application\chrome.exe"
+    "!ProgramFiles(x86)!\Google\Chrome\Application\chrome.exe"
+    "!LocalAppData!\Google\Chrome\Application\chrome.exe"
+) do if not defined BROWSER_BIN if exist "%%~B" set "BROWSER_BIN=%%~B"
+
+if not defined BROWSER_BIN for %%E in (msedge.exe chrome.exe) do if not defined BROWSER_BIN for %%P in (%%E) do if not "%%~$PATH:P"=="" set "BROWSER_BIN=%%~$PATH:P"
 
 echo [INFO] Launching Kiosk display in Fullscreen (Press F11 to exit fullscreen)...
-if defined BROWSER_BIN (
-    start "" !BROWSER_BIN! --app=!KIOSK_URL! --start-fullscreen
-) else (
-    where msedge >nul 2>&1
-    if not errorlevel 1 (
-        start "" msedge --app=!KIOSK_URL! --start-fullscreen
-    ) else (
-        where chrome >nul 2>&1
-        if not errorlevel 1 (
-            start "" chrome --app=!KIOSK_URL! --start-fullscreen
-        ) else (
-            start "" !KIOSK_URL!
-        )
-    )
-)
+if defined BROWSER_BIN echo [INFO] Browser: !BROWSER_BIN!
+if defined BROWSER_BIN start "" "!BROWSER_BIN!" --app=!KIOSK_URL! --start-fullscreen
+if not defined BROWSER_BIN echo [WARN] Edge/Chrome not found - opening the default browser instead.
+if not defined BROWSER_BIN start "" "!KIOSK_URL!"
 
 echo.
 echo ============================================================
