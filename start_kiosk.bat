@@ -5,7 +5,7 @@ title SHC MG Face Attendance System - Kiosk Station
 set "PORT=8000"
 set "VENV_PY=.venv\Scripts\python.exe"
 set "VERCHECK=import sys; sys.exit(0 if (3,10) <= sys.version_info < (3,13) else 1)"
-set "DEPCHECK=import uvicorn, fastapi, cv2, deepface"
+set "DEPCHECK=import uvicorn, fastapi, cv2; from deepface import DeepFace; import tf_keras"
 
 echo ============================================================
 echo      SHC MG FACE ATTENDANCE SYSTEM - KIOSK STATION
@@ -81,12 +81,9 @@ if errorlevel 1 (
     echo [INFO] Installing Python dependencies. This can take several minutes ...
     "%VENV_PY%" -m pip install --upgrade pip
     "%VENV_PY%" -m pip install -r requirements.txt
-    "%VENV_PY%" -c "!DEPCHECK!" >nul 2>&1
+    "%VENV_PY%" -c "!DEPCHECK!"
     if errorlevel 1 (
         echo [ERROR] Dependency installation failed - see the messages above.
-        echo.
-        echo [INFO] Running the TensorFlow check to find the exact cause ...
-        "%VENV_PY%" scripts\check_tensorflow.py
         echo.
         pause
         exit /b 1
@@ -118,9 +115,7 @@ if not exist "%~dp0frontend\dist\index.html" (
 :: 4. Start the server and wait until it really answers.
 :: ------------------------------------------------------------
 echo [INFO] Starting AI Face ID server on http://localhost:%PORT% ...
-:: cmd /k keeps this window open if the server ever exits, so the error
-:: stays on screen instead of vanishing with the window.
-start "MG Attendance Backend" /min cmd /k "%VENV_PY% -m uvicorn server:app --host 0.0.0.0 --port %PORT% & echo. & echo [BACKEND STOPPED] The server exited. Check backend\logs\server.log for the reason."
+start "MG Attendance Backend" /min "%VENV_PY%" -m uvicorn server:app --host 0.0.0.0 --port %PORT%
 
 echo [INFO] Waiting for the server and AI models to initialise ...
 set "READY=0"
@@ -129,10 +124,10 @@ if errorlevel 1 (
     ping 127.0.0.1 -n 11 >nul
     set "READY=1"
 ) else (
-    for /l %%A in (1,1,60) do (
+    for /l %%A in (1,1,90) do (
         if "!READY!"=="0" (
             ping 127.0.0.1 -n 2 >nul
-            curl.exe -sf -o nul http://localhost:%PORT%/api/status && set "READY=1"
+            curl.exe -sf -o nul http://127.0.0.1:%PORT%/api/status && set "READY=1"
         )
     )
 )
@@ -140,7 +135,7 @@ if errorlevel 1 (
 if "!READY!"=="0" (
     echo.
     echo [ERROR] The server never answered on port %PORT%.
-    echo         Check the "MG Attendance Backend" window and backend\logs\server.log for the error.
+    echo         The "MG Attendance Backend" window probably closed with an error.
     echo         Run this command to see it:
     echo             backend\.venv\Scripts\python.exe -m uvicorn server:app --port %PORT%
     echo.
@@ -148,8 +143,42 @@ if "!READY!"=="0" (
     exit /b 1
 )
 
+:: ------------------------------------------------------------
+:: 5. Launch Kiosk display in Edge (preferred) or Chrome
+:: ------------------------------------------------------------
+set "KIOSK_URL=http://localhost:%PORT%/kiosk"
+set "BROWSER_BIN="
+
+if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" (
+    set "BROWSER_BIN="%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe""
+) else if exist "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" (
+    set "BROWSER_BIN="%ProgramFiles%\Microsoft\Edge\Application\msedge.exe""
+) else if exist "%LocalAppData%\Microsoft\Edge\Application\msedge.exe" (
+    set "BROWSER_BIN="%LocalAppData%\Microsoft\Edge\Application\msedge.exe""
+) else if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" (
+    set "BROWSER_BIN="%ProgramFiles%\Google\Chrome\Application\chrome.exe""
+) else if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" (
+    set "BROWSER_BIN="%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe""
+) else if exist "%LocalAppData%\Google\Chrome\Application\chrome.exe" (
+    set "BROWSER_BIN="%LocalAppData%\Google\Chrome\Application\chrome.exe""
+)
+
 echo [INFO] Launching Kiosk display in Fullscreen (Press F11 to exit fullscreen)...
-start "" chrome.exe --start-fullscreen http://localhost:%PORT%/kiosk 2>nul || start "" msedge.exe --start-fullscreen http://localhost:%PORT%/kiosk 2>nul || start "" http://localhost:%PORT%/kiosk
+if defined BROWSER_BIN (
+    start "" !BROWSER_BIN! --app=!KIOSK_URL! --start-fullscreen
+) else (
+    where msedge >nul 2>&1
+    if not errorlevel 1 (
+        start "" msedge --app=!KIOSK_URL! --start-fullscreen
+    ) else (
+        where chrome >nul 2>&1
+        if not errorlevel 1 (
+            start "" chrome --app=!KIOSK_URL! --start-fullscreen
+        ) else (
+            start "" !KIOSK_URL!
+        )
+    )
+)
 
 echo.
 echo ============================================================

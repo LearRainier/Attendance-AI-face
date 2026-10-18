@@ -2,11 +2,9 @@
 # development PC, so every kiosk PC installs the same tested set instead of
 # whatever is newest on the day ("Failed to load the native TensorFlow runtime").
 opencv-python>=4.8.0,<5.0.0 
-numpy==2.5.3
-tensorflow==2.21.0
-keras==3.15.1
-protobuf==7.36.2
-tf-keras==2.21.0
-deepface==0.0.101
+numpy>=1.26.0
+tensorflow>=2.15.0
+tf-keras
+deepface>=0.0.93
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0

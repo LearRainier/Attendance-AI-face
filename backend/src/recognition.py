@@ -26,13 +26,10 @@ def _get_deepface():
         try:
             from deepface import DeepFace
             _deepface = DeepFace
-        except ImportError as e:
-            # Keep the original message: "Failed to load the native
-            # TensorFlow runtime" also arrives as an ImportError, and
-            # hiding it behind "not installed" sends people the wrong way.
+        except ImportError:
             raise ImportError(
-                f"Could not import DeepFace / TensorFlow: {e}"
-            ) from e
+                "DeepFace is not installed. Run: pip install deepface"
+            )
     return _deepface
 
 
