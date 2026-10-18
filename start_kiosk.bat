@@ -124,10 +124,10 @@ if errorlevel 1 (
     ping 127.0.0.1 -n 11 >nul
     set "READY=1"
 ) else (
-    for /l %%A in (1,1,60) do (
+    for /l %%A in (1,1,90) do (
         if "!READY!"=="0" (
             ping 127.0.0.1 -n 2 >nul
-            curl.exe -sf -o nul http://localhost:%PORT%/api/status && set "READY=1"
+            curl.exe -sf -o nul http://127.0.0.1:%PORT%/api/status && set "READY=1"
         )
     )
 )
@@ -135,9 +135,16 @@ if errorlevel 1 (
 if "!READY!"=="0" (
     echo.
     echo [ERROR] The server never answered on port %PORT%.
-    echo         The "MG Attendance Backend" window probably closed with an error.
-    echo         Run this command to see it:
-    echo             backend\.venv\Scripts\python.exe -m uvicorn server:app --port %PORT%
+    echo.
+    if exist "data\audit.log" (
+        echo ======================== BACKEND AUDIT LOG ========================
+        powershell -Command "Get-Content data\audit.log -Tail 25"
+        echo ===================================================================
+        echo.
+    )
+    echo To manually run the server in an open terminal and diagnose:
+    echo     cd /d "%~dp0backend"
+    echo     .venv\Scripts\python.exe -m uvicorn server:app --port %PORT%
     echo.
     pause
     exit /b 1

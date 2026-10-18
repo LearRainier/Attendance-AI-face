@@ -16,17 +16,49 @@ if sys.platform == "win32":
     except Exception:
         pass  # Fallback: some environments don't support reconfigure
 
-# One logging config for the whole app, so every module can just do
-# `logger = logging.getLogger(__name__)` and get consistent formatting
-# instead of scattering print() calls. Per-frame/per-track chatter (track
-# locked/lost, scan queued/completed) logs at DEBUG so it's off by default
-# instead of flooding the console on every camera tick — set LOG_LEVEL=DEBUG
-# to see it. Skips reconfiguring if something upstream (e.g. uvicorn) has
-# already added handlers, so running under `uvicorn server:app` doesn't
-# duplicate every line.
-if not logging.getLogger().handlers:
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+from logging.handlers import RotatingFileHandler
+
+# Path to persistent audit log
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(_BACKEND_DIR, "data")
+try:
+    os.makedirs(DATA_DIR, exist_ok=True)
+except Exception:
+    pass
+
+AUDIT_LOG_PATH = os.path.join(DATA_DIR, "audit.log")
+
+# Unified audit formatter
+_log_format = "%(asctime)s [%(levelname)-7s] [%(name)s] [%(threadName)s] %(message)s"
+_date_format = "%Y-%m-%d %H:%M:%S"
+_log_level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
+_log_level = getattr(logging, _log_level_name, logging.INFO)
+
+root_logger = logging.getLogger()
+root_logger.setLevel(_log_level)
+
+# 1. Ensure console stream handler
+_has_stream = any(isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler) for h in root_logger.handlers)
+if not _has_stream:
+    _console_handler = logging.StreamHandler(sys.stdout)
+    _console_handler.setFormatter(logging.Formatter(_log_format, datefmt=_date_format))
+    _console_handler.setLevel(_log_level)
+    root_logger.addHandler(_console_handler)
+
+# 2. Ensure persistent audit file handler (5MB rotation, 5 backups, UTF-8)
+_has_file = any(isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "") == os.path.abspath(AUDIT_LOG_PATH) for h in root_logger.handlers)
+if not _has_file:
+    try:
+        _file_handler = RotatingFileHandler(
+            AUDIT_LOG_PATH,
+            maxBytes=5 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8",
+            delay=False,
+        )
+        _file_handler.setFormatter(logging.Formatter(_log_format, datefmt=_date_format))
+        _file_handler.setLevel(_log_level)
+        root_logger.addHandler(_file_handler)
+    except Exception as _e:
+        sys.stderr.write(f"Failed to initialize audit file handler: {_e}\n")
+

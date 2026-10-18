@@ -7,6 +7,9 @@ echo.
 
 echo [1/3] Closing backend server...
 taskkill /f /fi "WINDOWTITLE eq MG Attendance Backend*" >nul 2>&1
+for /f "tokens=5" %%P in ('netstat -ano -p tcp ^| findstr /C:":8000 " ^| findstr /I "LISTENING"') do (
+    taskkill /f /pid %%P >nul 2>&1
+)
 
 echo [2/3] Closing Cloudflare Tunnel...
 taskkill /f /im cloudflared.exe >nul 2>&1

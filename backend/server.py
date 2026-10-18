@@ -25,7 +25,7 @@ from typing import Optional, Any, Tuple, List, Dict
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header, Depends, Query
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header, Depends, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -580,26 +580,41 @@ def _open_capture(index):
     treating those as working is what makes the live feed sit black forever
     with nothing in the log but grab-frame warnings.
     """
+    logger.info("[CAMERA_AUDIT] Initiating capture probe for camera index %d...", index)
     for api, backend_name in CAMERA_BACKENDS:
-        capture = cv2.VideoCapture(index, api)
-        if not capture.isOpened():
-            capture.release()
+        logger.info("[CAMERA_AUDIT] Trying camera %d with backend '%s' (API=%d)...", index, backend_name, api)
+        try:
+            capture = cv2.VideoCapture(index, api)
+        except Exception as e:
+            logger.error("[CAMERA_AUDIT] Exception instantiating VideoCapture(%d, %s): %s", index, backend_name, e, exc_info=True)
             continue
 
+        if not capture.isOpened():
+            logger.warning("[CAMERA_AUDIT] Camera %d failed to open on backend '%s' (isOpened=False)", index, backend_name)
+            try:
+                capture.release()
+            except Exception:
+                pass
+            continue
+
+        logger.info("[CAMERA_AUDIT] Camera %d opened via '%s'. Negotiating properties...", index, backend_name)
         if backend_name == "msmf":
             # In MSMF, setting only width to 1280 negotiates 1280x720 @ 30 FPS in a single step,
             # avoiding multiple redundant MediaFoundation topology rebuilds.
             try:
                 capture.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_REQUEST_WIDTH)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("[CAMERA_AUDIT] Error setting MSMF width: %s", e)
         else:
             try:
                 capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
             except Exception:
                 pass
-            capture.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_REQUEST_WIDTH)
-            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_REQUEST_HEIGHT)
+            try:
+                capture.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_REQUEST_WIDTH)
+                capture.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_REQUEST_HEIGHT)
+            except Exception:
+                pass
             try:
                 capture.set(cv2.CAP_PROP_FPS, 30)
             except Exception:
@@ -609,8 +624,13 @@ def _open_capture(index):
             except Exception:
                 pass
 
-        for _ in range(CAMERA_WARMUP_ATTEMPTS):
-            ok, frame = capture.read()
+        for attempt in range(CAMERA_WARMUP_ATTEMPTS):
+            try:
+                ok, frame = capture.read()
+            except Exception as read_err:
+                logger.error("[CAMERA_AUDIT] Exception reading frame from camera %d on '%s': %s", index, backend_name, read_err, exc_info=True)
+                break
+
             if ok and frame is not None:
                 actual_w = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
                 actual_h = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -618,15 +638,19 @@ def _open_capture(index):
                 fourcc = int(capture.get(cv2.CAP_PROP_FOURCC))
                 fourcc_str = "".join([chr((fourcc >> 8 * i) & 0xFF) for i in range(4)])
                 logger.info(
-                    "Camera %d opened via %s: %dx%d @ %.1f FPS (FOURCC: '%s')",
+                    "[CAMERA_AUDIT] Camera %d successfully acquired via %s: %dx%d @ %.1f FPS (FOURCC: '%s')",
                     index, backend_name, actual_w, actual_h, actual_fps, fourcc_str
                 )
                 return capture, backend_name, frame
             time.sleep(CAMERA_WARMUP_INTERVAL)
 
-        logger.debug("Camera %d opened on %s but delivered no frames.", index, backend_name)
-        capture.release()
+        logger.warning("[CAMERA_AUDIT] Camera %d opened on %s but returned no decoded frames after %d attempts.", index, backend_name, CAMERA_WARMUP_ATTEMPTS)
+        try:
+            capture.release()
+        except Exception:
+            pass
 
+    logger.error("[CAMERA_AUDIT] All backends failed for camera %d. Hardware may be unplugged, USB port tripping, or in use.", index)
     return None, None, None
 
 
@@ -938,8 +962,16 @@ def camera_loop():
                 ret, frame = video_capture.read()
                 if not ret or frame is None:
                     consecutive_read_failures += 1
+                    if consecutive_read_failures % 30 == 0:
+                        logger.warning(
+                            "[CAMERA_AUDIT] Camera %s read failure streak: %d consecutive drops (possible USB power trip, loose cable, or driver stall)",
+                            open_index, consecutive_read_failures
+                        )
                     if consecutive_read_failures > 90:
-                        logger.error("Camera %d stopped delivering frames. Releasing and retrying.", open_index)
+                        logger.error(
+                            "[CAMERA_AUDIT] Camera %s stopped delivering frames after 90 drops. Releasing handle and initiating hardware recovery...",
+                            open_index
+                        )
                         video_capture.release()
                         video_capture = None
                         open_index = None
@@ -1121,10 +1153,12 @@ def camera_loop():
                 } if toast_active else None
                 state.fps = fps
                 _refresh_broadcast_payload()
+    except Exception as fatal_cam_err:
+        logger.error("[CAMERA_AUDIT] Fatal unexpected error in camera_loop: %s", fatal_cam_err, exc_info=True)
     finally:
         if video_capture is not None:
             video_capture.release()
-        logger.info("Camera loop stopped.")
+        logger.info("[CAMERA_AUDIT] Camera loop stopped.")
 
 
 # ---------------------------------------------------------------------------
@@ -1136,8 +1170,22 @@ async def lifespan(app: FastAPI):
     global _worker, _camera_thread, _embedding_dim
 
     logger.info("=" * 60)
-    logger.info("AI Face ID -- Web Backend")
+    logger.info("AI Face ID -- Web Backend Starting")
     logger.info("=" * 60)
+    logger.info("[STARTUP_AUDIT] Python %s (%s)", sys.version.split()[0], sys.platform)
+    logger.info("[STARTUP_AUDIT] Process PID: %d, Working Dir: %s", os.getpid(), os.getcwd())
+    logger.info("[STARTUP_AUDIT] Libraries: OpenCV %s, NumPy %s", cv2.__version__, np.__version__)
+
+    weights_dir = os.path.expanduser(os.path.join("~", ".deepface", "weights"))
+    if os.path.isdir(weights_dir):
+        try:
+            cached_weights = os.listdir(weights_dir)
+            logger.info("[STARTUP_AUDIT] Cached DeepFace weights: %s", cached_weights)
+        except Exception:
+            pass
+    else:
+        logger.warning("[STARTUP_AUDIT] DeepFace weights folder not found at %s. Online download will be required.", weights_dir)
+
     logger.info("Warming up %s model...", MODEL_NAME)
     dummy = np.zeros((160, 160, 3), dtype=np.uint8)
     last_error = None
@@ -1188,7 +1236,7 @@ async def lifespan(app: FastAPI):
 
     logger.info("Loading registered templates...")
     _reload_registered_faces()
-    logger.info("Database loaded. (%d user(s) registered)", state.registered_count)
+    logger.info("[STARTUP_AUDIT] Database loaded. (%d user(s) registered)", state.registered_count)
 
     saved_index = load_settings().get("camera_index")
     selected_index = saved_index if isinstance(saved_index, int) else DEFAULT_CAMERA_INDEX
@@ -1203,7 +1251,7 @@ async def lifespan(app: FastAPI):
         }]
         state.camera_index = selected_index
 
-    logger.info("Launching camera pipeline with camera %d...", selected_index)
+    logger.info("[STARTUP_AUDIT] Launching camera pipeline with camera index %d...", selected_index)
 
     _worker = FaceRecognitionWorker(tracker.tracks, tracks_lock, state)
     _worker.start()
@@ -1213,14 +1261,46 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    logger.info("Shutting down...")
+    logger.info("[SHUTDOWN_AUDIT] Server shutdown initiated...")
     _shutdown_event.set()
     _worker.stop()
     if _camera_thread is not None:
         _camera_thread.join(timeout=3.0)
+    logger.info("[SHUTDOWN_AUDIT] Server shutdown complete.")
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def audit_log_middleware(request: Request, call_next):
+    start_time = time.time()
+    try:
+        response = await call_next(request)
+        duration_ms = (time.time() - start_time) * 1000
+        if request.url.path.startswith("/api/"):
+            client_ip = request.client.host if request.client else "unknown"
+            logger.info(
+                "[API_AUDIT] %s %s -> HTTP %d (%.1f ms) [client: %s]",
+                request.method,
+                request.url.path,
+                response.status_code,
+                duration_ms,
+                client_ip,
+            )
+        return response
+    except Exception as exc:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(
+            "[API_AUDIT] %s %s -> UNHANDLED EXCEPTION (%.1f ms): %s",
+            request.method,
+            request.url.path,
+            duration_ms,
+            exc,
+            exc_info=True,
+        )
+        raise
+
 
 
 @app.websocket("/ws/live")
@@ -2135,6 +2215,26 @@ async def api_set_schedule_setting(
                 state.camera_error = None
 
     return _schedule_setting_response()
+
+
+@app.get("/api/admin/logs")
+def get_audit_logs(lines: int = Query(default=100, ge=10, le=1000)):
+    """Retrieve the recent lines from backend/data/audit.log for live troubleshooting."""
+    audit_path = os.path.join(BASE_DIR, "data", "audit.log")
+    if not os.path.exists(audit_path):
+        return {"status": "ok", "total_lines": 0, "returned_lines": 0, "lines": ["No audit.log file created yet."]}
+    try:
+        with open(audit_path, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+        tail = [line.rstrip() for line in all_lines[-lines:]]
+        return {
+            "status": "ok",
+            "total_lines": len(all_lines),
+            "returned_lines": len(tail),
+            "lines": tail,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read audit log: {e}")
 
 
 # Serve the built React app. Falls back to a helpful message if the
