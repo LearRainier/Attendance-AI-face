@@ -115,7 +115,7 @@ if not exist "%~dp0frontend\dist\index.html" (
 :: 4. Start the server and wait until it really answers.
 :: ------------------------------------------------------------
 echo [INFO] Starting AI Face ID server on http://localhost:%PORT% ...
-start "MG Attendance Backend" /min "%VENV_PY%" -m uvicorn server:app --host 0.0.0.0 --port %PORT%
+start "MG Attendance Backend" "%VENV_PY%" -m uvicorn server:app --host 0.0.0.0 --port %PORT%
 
 echo [INFO] Waiting for the server and AI models to initialise ...
 set "READY=0"
