@@ -26,9 +26,9 @@ def _get_deepface():
         try:
             from deepface import DeepFace
             _deepface = DeepFace
-        except ImportError:
+        except ImportError as e:
             raise ImportError(
-                "DeepFace is not installed. Run: pip install deepface"
+                f"DeepFace import error ({e}). Run: .venv\\Scripts\\python.exe -m pip install -r requirements.txt"
             )
     return _deepface
 
