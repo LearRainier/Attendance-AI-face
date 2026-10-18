@@ -85,6 +85,9 @@ if errorlevel 1 (
     if errorlevel 1 (
         echo [ERROR] Dependency installation failed - see the messages above.
         echo.
+        echo [INFO] Running the TensorFlow check to find the exact cause ...
+        "%VENV_PY%" scripts\check_tensorflow.py
+        echo.
         pause
         exit /b 1
     )
@@ -115,7 +118,9 @@ if not exist "%~dp0frontend\dist\index.html" (
 :: 4. Start the server and wait until it really answers.
 :: ------------------------------------------------------------
 echo [INFO] Starting AI Face ID server on http://localhost:%PORT% ...
-start "MG Attendance Backend" /min "%VENV_PY%" -m uvicorn server:app --host 0.0.0.0 --port %PORT%
+:: cmd /k keeps this window open if the server ever exits, so the error
+:: stays on screen instead of vanishing with the window.
+start "MG Attendance Backend" /min cmd /k "%VENV_PY% -m uvicorn server:app --host 0.0.0.0 --port %PORT% & echo. & echo [BACKEND STOPPED] The server exited. Check backend\logs\server.log for the reason."
 
 echo [INFO] Waiting for the server and AI models to initialise ...
 set "READY=0"
@@ -135,7 +140,7 @@ if errorlevel 1 (
 if "!READY!"=="0" (
     echo.
     echo [ERROR] The server never answered on port %PORT%.
-    echo         The "MG Attendance Backend" window probably closed with an error.
+    echo         Check the "MG Attendance Backend" window and backend\logs\server.log for the error.
     echo         Run this command to see it:
     echo             backend\.venv\Scripts\python.exe -m uvicorn server:app --port %PORT%
     echo.

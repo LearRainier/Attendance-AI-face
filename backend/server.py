@@ -527,10 +527,26 @@ class ThreadedVideoCapture:
         self.frame_id = 1 if first_frame is not None else 0
         self._last_read_id = -1
         self.cond = threading.Condition()
+        self._release_on_exit = False
+        self._reader_done = False
+        self._release_lock = threading.Lock()
         self.thread = threading.Thread(target=self._reader, daemon=True, name="CameraGrabberThread")
         self.thread.start()
 
     def _reader(self):
+        try:
+            self._read_frames()
+        finally:
+            with self._release_lock:
+                self._reader_done = True
+                release_now = self._release_on_exit
+            if release_now:
+                try:
+                    self.capture.release()
+                except Exception:
+                    pass
+
+    def _read_frames(self):
         while self.running:
             if not self.capture.isOpened():
                 break
@@ -559,7 +575,20 @@ class ThreadedVideoCapture:
         with self.cond:
             self.cond.notify_all()
         if self.thread.is_alive():
-            self.thread.join(timeout=1.0)
+            self.thread.join(timeout=3.0)
+        with self._release_lock:
+            still_reading = not self._reader_done
+            if still_reading:
+                self._release_on_exit = True
+        if still_reading:
+            # The grabber is still stuck inside capture.read() (typical right
+            # after Windows wakes from standby, when the MSMF driver can block
+            # for many seconds). Releasing the device underneath an in-flight
+            # read is a native use-after-free that kills python.exe outright,
+            # with no traceback. Hand the release to the grabber thread
+            # instead: _reader() releases the capture once read() returns.
+            logger.warning("Camera grabber still busy after 3s; deferring device release to it.")
+            return
         try:
             self.capture.release()
         except Exception:
@@ -1150,6 +1179,20 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             last_error = e
             logger.warning("Model warm-up attempt %d failed: %s", attempt + 1, e)
+
+    if not _embedding_dim and last_error is not None and (
+        "tensorflow" in str(last_error).lower() or "dll load failed" in str(last_error).lower()
+    ):
+        # Not a download problem: TensorFlow itself can't load on this PC
+        # (missing Visual C++ runtime, CPU without AVX, out of memory/page
+        # file, antivirus, or mismatched package versions). Say so plainly
+        # instead of the "check your internet" message below.
+        logger.critical("TensorFlow failed to load: %s", last_error, exc_info=last_error)
+        raise RuntimeError(
+            "TensorFlow could not load on this PC, so face recognition cannot start. "
+            r"Run  .venv\Scripts\python.exe scripts\check_tensorflow.py  in the backend "
+            "folder to see the exact cause and how to fix it."
+        ) from last_error
 
     if not _embedding_dim:
         # Without a known embedding dimension the dimension guard in
