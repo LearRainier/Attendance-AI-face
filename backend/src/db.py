@@ -37,8 +37,14 @@ def get_db():
         conn.close()
 
 
-def init_db():
+_db_initialized = False
+
+
+def init_db(force: bool = False):
     """Create database tables and indices if they do not exist."""
+    global _db_initialized
+    if _db_initialized and not force:
+        return
     with get_db() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS users (
@@ -108,7 +114,8 @@ def init_db():
         # Run auto-increment check on initialization
         auto_increment_year_levels(conn)
 
-    logger.info("SQLite database initialized at: %s", DB_PATH)
+    _db_initialized = True
+    logger.info("[DB_AUDIT] SQLite database initialized at: %s", DB_PATH)
 
 
 def get_current_academic_year(dt: Optional[Any] = None) -> int:
