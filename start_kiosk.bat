@@ -81,9 +81,11 @@ if errorlevel 1 (
     echo [INFO] Installing Python dependencies. This can take several minutes ...
     "%VENV_PY%" -m pip install --upgrade pip
     "%VENV_PY%" -m pip install -r requirements.txt
-    "%VENV_PY%" -c "!DEPCHECK!" >nul 2>&1
+    "%VENV_PY%" -c "!DEPCHECK!"
     if errorlevel 1 (
-        echo [ERROR] Dependency installation failed - see the messages above.
+        echo.
+        echo [ERROR] Python dependency verification failed.
+        echo The exact error is shown above.
         echo.
         pause
         exit /b 1
