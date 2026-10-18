@@ -5,7 +5,7 @@ title SHC MG Face Attendance System - Kiosk Station
 set "PORT=8000"
 set "VENV_PY=.venv\Scripts\python.exe"
 set "VERCHECK=import sys; sys.exit(0 if (3,10) <= sys.version_info < (3,13) else 1)"
-set "DEPCHECK=import uvicorn, fastapi, cv2, deepface"
+set "DEPCHECK=import uvicorn, fastapi, cv2; from deepface import DeepFace; import tf_keras"
 
 echo ============================================================
 echo      SHC MG FACE ATTENDANCE SYSTEM - KIOSK STATION
