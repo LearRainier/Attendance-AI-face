@@ -181,9 +181,18 @@ if not defined BROWSER_BIN for %%E in (msedge.exe chrome.exe) do if not defined 
 
 set "KIOSK_PROFILE=%LOCALAPPDATA%\MG_Attendance\kiosk_profile"
 
+:: Pre-approve the camera for the kiosk address in this dedicated profile,
+:: so the browser never asks "Allow camera?" (Register page / face capture).
+:: This only works because the browser runs in a normal (non-InPrivate)
+:: profile: --edge-kiosk-type=fullscreen makes Edge kiosk mode InPrivate,
+:: which throws away every saved permission on exit - that is why the
+:: prompt used to come back on every start. Plain --kiosk is still a
+:: borderless fullscreen kiosk window.
+if defined BROWSER_BIN "%VENV_PY%" scripts\allow_kiosk_camera.py "!KIOSK_PROFILE!" %PORT%
+
 echo [INFO] Launching Kiosk display in Fullscreen (Press Alt+F4 to exit fullscreen)...
 if defined BROWSER_BIN echo [INFO] Browser: !BROWSER_BIN!
-if defined BROWSER_BIN start "" "!BROWSER_BIN!" --kiosk "!KIOSK_URL!" --edge-kiosk-type=fullscreen --no-first-run --no-default-browser-check --user-data-dir="!KIOSK_PROFILE!"
+if defined BROWSER_BIN start "" "!BROWSER_BIN!" --kiosk "!KIOSK_URL!" --no-first-run --no-default-browser-check --user-data-dir="!KIOSK_PROFILE!"
 if not defined BROWSER_BIN echo [WARN] Edge/Chrome not found - opening the default browser instead.
 if not defined BROWSER_BIN start "" "!KIOSK_URL!"
 
