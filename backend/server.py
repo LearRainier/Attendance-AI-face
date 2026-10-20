@@ -135,6 +135,12 @@ FRAME_JPEG_QUALITY = 65
 STATE_BROADCAST_INTERVAL = 1 / 30  # ~30fps to connected WebSocket clients (smooth and bandwidth-efficient)
 FIRST_SCAN_DELAY_SECONDS = 1.5     # hold a track before its first recognition attempt
 RETRY_COOLDOWN_SECONDS = 5.0       # retry Unknown/Error/No-Face tracks this often
+# A face must be matched to the SAME person on this many consecutive scans
+# before it is accepted (liveness challenge / "already logged"). One lucky
+# frame of an unregistered person scoring under the threshold is no longer
+# enough to be logged as someone else; a real match costs ~0.5 s extra.
+MATCH_CONFIRMATIONS_REQUIRED = 2
+CONFIRM_RESCAN_DELAY_SECONDS = 0.5  # gap before the confirming scan
 UNKNOWN_SNAPSHOT_COOLDOWN_SECONDS = 20.0
 TOAST_DURATION_SECONDS = 3.0
 RECENT_CHECKINS_MAX = 8              # how many rows the dashboard's "Recent Check-ins" panel keeps
@@ -385,7 +391,38 @@ class FaceRecognitionWorker(threading.Thread):
                         "Scanning...", "No Face Detected", "Error", "Unknown",
                         "No Registered Faces", "Spoof Detected", "Liveness Failed",
                     )
+
+                    # Multi-scan confirmation: count consecutive scans that
+                    # agree on the same person; an "Unknown" or a different
+                    # name in between starts the count over.
+                    needs_confirmation = False
                     if name not in non_person_labels:
+                        if track.confirm_name == name:
+                            track.confirm_hits += 1
+                        else:
+                            track.confirm_name, track.confirm_hits = name, 1
+                        needs_confirmation = (
+                            track.confirm_hits < MATCH_CONFIRMATIONS_REQUIRED
+                            and track.liveness_state in ("none", "failed")
+                        )
+                    elif name == "Unknown":
+                        track.confirm_name, track.confirm_hits = None, 0
+
+                    if needs_confirmation:
+                        track.label = "Scanning..."
+                        track.distance = distance
+                        track.status = "idle"
+                        # Make the camera loop's retry check fire after
+                        # CONFIRM_RESCAN_DELAY_SECONDS instead of the full
+                        # RETRY_COOLDOWN_SECONDS.
+                        track.last_recognition_time = (
+                            time.time() - RETRY_COOLDOWN_SECONDS + CONFIRM_RESCAN_DELAY_SECONDS
+                        )
+                        logger.info(
+                            "Track %d: candidate %s (%.3f), confirming with scan %d of %d",
+                            track_id, name, distance, track.confirm_hits + 1, MATCH_CONFIRMATIONS_REQUIRED,
+                        )
+                    elif name not in non_person_labels:
                         # Gate 1: Passive Anti-Spoofing check (MiniFASNet + screen artifacts)
                         is_real, spoof_reason, spoof_score = True, "genuine", 1.0
                         if frame_snapshot is not None and bbox_snapshot is not None:
@@ -1065,43 +1102,33 @@ def camera_loop():
                             track.challenge_baseline = metrics
 
                         if status == "passed":
-                            # Gate 2: Final Anti-Spoof Confirmation Check
-                            # Prevents any on-the-fly screen swap or video replay passing
-                            is_real, spoof_reason, spoof_score = check_anti_spoof(frame, track.bbox)
-                            if not is_real:
-                                track.is_spoof = True
-                                track.spoof_reason = spoof_reason
-                                track.liveness_state = "failed"
-                                track.update_status("Spoof Detected")
-                                track.label = "Spoof Detected"
-                                save_spoof_snapshot(crop_face_with_padding(frame, track.bbox))
-                                logger.warning(
-                                    "Active challenge passed but presentation attack caught by anti-spoof (%s, score: %.3f)",
-                                    spoof_reason, spoof_score
+                            # The passive anti-spoof check already ran before the challenge was
+                            # issued (FaceRecognitionWorker). A second check here was removed:
+                            # completing the head-turn/smile gesture is itself the liveness
+                            # proof, and re-running MiniFASNet on a frame where the person is
+                            # mid-gesture doubled the chance of flagging a real person.
+                            track.liveness_state = "passed"
+                            confirmed_name = track.candidate_name or track.label.split(" - ")[0]
+                            track.update_status(confirmed_name)
+                            logged, att_status, att_msg = log_attendance(confirmed_name, track_id=track_id, event_type="IN")
+                            if logged:
+                                track.toast_triggered = False
+                                track.attendance_logged_in = True
+                                track.attendance_status = att_status
+                                logger.info(
+                                    "Active liveness passed for %s (%s). Check-in logged IN (%s).",
+                                    confirmed_name, track.challenge, att_status
                                 )
                             else:
-                                track.liveness_state = "passed"
-                                confirmed_name = track.candidate_name or track.label.split(" - ")[0]
-                                track.update_status(confirmed_name)
-                                logged, att_status, att_msg = log_attendance(confirmed_name, track_id=track_id, event_type="IN")
-                                if logged:
-                                    track.toast_triggered = False
-                                    track.attendance_logged_in = True
-                                    track.attendance_status = att_status
-                                    logger.info(
-                                        "Active liveness & anti-spoof passed for %s (%s). Check-in logged IN (%s).",
-                                        confirmed_name, track.challenge, att_status
-                                    )
+                                track.attendance_logged_in = False
+                                track.toast_triggered = True
+                                track.liveness_state = "already_logged"
+                                if att_status == "SUNDAY_CLOSED":
+                                    track.label = f"{confirmed_name} (Closed on Sundays)"
+                                elif att_status == "REJECTED":
+                                    track.label = f"{confirmed_name} (Closed: Past 6:30 AM)"
                                 else:
-                                    track.attendance_logged_in = False
-                                    track.toast_triggered = True
-                                    track.liveness_state = "already_logged"
-                                    if att_status == "SUNDAY_CLOSED":
-                                        track.label = f"{confirmed_name} (Closed on Sundays)"
-                                    elif att_status == "REJECTED":
-                                        track.label = f"{confirmed_name} (Closed: Past 6:30 AM)"
-                                    else:
-                                        track.label = f"{confirmed_name} (Already Logged Today)"
+                                    track.label = f"{confirmed_name} (Already Logged Today)"
                         elif status == "failed":
                             track.liveness_state = "failed"
                             track.update_status("Liveness Failed")

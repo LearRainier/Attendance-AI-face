@@ -25,6 +25,7 @@ from typing import Dict, Tuple, Optional
 
 import cv2
 
+from src.lighting import enhance_low_light, inner_face_box
 from src.recognition import (
     find_match,
     get_embedding,
@@ -549,6 +550,11 @@ def verify_face_roi(face_img, match_index):
         # "Unknown" under "skip" and matched correctly under "yunet". The
         # extra detection pass is cheap here since recognition already runs
         # in a low-rate background worker, not per frame.
+        # Dark / backlit faces are brightened first (src/lighting.py). On
+        # this kiosk's dim-room snapshots that took a registered person from
+        # 0.78-0.87 (rejected) to 0.37-0.47 (matched). Well-lit faces are
+        # passed through unchanged.
+        face_img = enhance_low_light(face_img, inner_face_box(face_img.shape))
         query_vector = get_embedding(face_img, detector_backend="yunet", enforce_detection=False)
     except Exception as e:
         logger.warning("Embedding extraction error: %s", e)

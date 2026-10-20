@@ -43,7 +43,22 @@ def _get_deepface():
 MODEL_NAME = "ArcFace"            # Options: VGG-Face, Facenet, Facenet512, ArcFace, etc.
 DETECTOR_BACKEND = "opencv"       # Options: opencv, ssd, mtcnn, retinaface, yunet
 DISTANCE_METRIC = "cosine"        # Options: cosine, euclidean, euclidean_l2
-VERIFY_THRESHOLD = None           # None = use DeepFace's pre-tuned threshold for MODEL_NAME
+# Maximum cosine distance accepted as a match. DeepFace's pre-tuned value
+# for ArcFace/cosine is 0.68, which proved too loose for this kiosk: on its
+# own saved snapshots an UNREGISTERED person scored 0.698 against a
+# registered student - 0.02 from being logged as them - while the
+# registered person's own scans scored 0.06-0.47 (including dark scans
+# after low-light correction). 0.55 sits in the gap with margin both ways.
+# Lower it (e.g. 0.50) if strangers still get matched; raise it (e.g. 0.60)
+# if registered people too often come back "Unknown". Every scan's distance
+# is logged at INFO in data/audit.log to tune this with real numbers.
+VERIFY_THRESHOLD = 0.55           # None = use DeepFace's pre-tuned threshold for MODEL_NAME
+
+# A match must beat the closest *different* registered person by at least
+# this much cosine distance. If two students are almost equally close (look-
+# alikes, siblings, or a poor-quality frame that resembles everyone a bit),
+# the scan is treated as "Unknown" and retried instead of guessing.
+MATCH_MARGIN = 0.05
 
 
 def _get_verify_threshold():
@@ -328,8 +343,27 @@ def find_embedding_match_indexed(query_vector, names, matrix, threshold=None):
     # Rows are pre-normalized, so this dot product IS the cosine similarity.
     similarities = matrix @ query_norm
     best_idx = int(np.argmax(similarities))
+    best_name = names[best_idx]
     best_dist = 1.0 - float(similarities[best_idx])
 
-    if best_dist < _threshold:
-        return names[best_idx], best_dist
-    return "Unknown", best_dist
+    # Closest template that belongs to someone else (a person's own other
+    # templates don't count - they're supposed to be close).
+    other = np.array([n != best_name for n in names])
+    second_dist = 1.0 - float(similarities[other].max()) if other.any() else None
+
+    if best_dist >= _threshold:
+        logger.info("Scan: no match (closest %s at %.3f, limit %.2f)", best_name, best_dist, _threshold)
+        return "Unknown", best_dist
+
+    if second_dist is not None and second_dist - best_dist < MATCH_MARGIN:
+        logger.info(
+            "Scan: ambiguous - %s at %.3f vs another person at %.3f (margin %.3f < %.2f); retrying",
+            best_name, best_dist, second_dist, second_dist - best_dist, MATCH_MARGIN,
+        )
+        return "Unknown", best_dist
+
+    logger.info(
+        "Scan: matched %s at %.3f (limit %.2f%s)", best_name, best_dist, _threshold,
+        f", next person {second_dist:.3f}" if second_dist is not None else "",
+    )
+    return best_name, best_dist

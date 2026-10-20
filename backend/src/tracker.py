@@ -47,6 +47,11 @@ class FaceTrack:
         self.is_spoof = False
         self.spoof_reason = ""
 
+        # Consecutive scans that agreed on the same person. A name is only
+        # accepted after MATCH_CONFIRMATIONS_REQUIRED of these (server.py).
+        self.confirm_name = None
+        self.confirm_hits = 0
+
     # Labels that should go back to "idle" so the main loop can retry them.
     RETRYABLE_LABELS = (
         "Scanning...", "Unknown", "Error", "No Face Detected",

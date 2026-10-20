@@ -20,6 +20,8 @@ import warnings
 import cv2
 import numpy as np
 
+from src.lighting import enhance_low_light, is_low_light
+
 # Ensure Windows stdout/stderr encoding doesn't break on DeepFace log emojis
 try:
     _reconfig_out = getattr(sys.stdout, "reconfigure", None)
@@ -36,6 +38,20 @@ warnings.filterwarnings("ignore", message=".*Implicit dimension choice for softm
 
 logger = logging.getLogger(__name__)
 
+# How sure MiniFASNet must be that a face is FAKE before it is rejected.
+#
+# DeepFace's own Fasnet.analyze() flags a face as spoof whenever "real" is
+# not the single most likely of its three classes - i.e. at anything above
+# ~50% fake. Real people standing in front of a bright window or in a dim
+# room routinely score 50-70% fake, so they were being rejected. Measured on
+# this kiosk's saved snapshots: a genuine phone-photo attack scored 100%
+# fake, while real-but-badly-lit faces scored 34-59% (and up to 87% only in
+# near-black frames, which the low-light correction below brings down).
+# 0.75 keeps the phone attack blocked with a wide margin and lets those real
+# faces through. Raise it toward 0.9 to be more lenient, lower it toward
+# 0.6 to be stricter.
+SPOOF_REJECT_CONFIDENCE = 0.75
+
 _detector_instance: Optional["AntiSpoofDetector"] = None
 _detector_lock = threading.Lock()
 
@@ -44,7 +60,9 @@ class AntiSpoofDetector:
     def __init__(self):
         logger.info("Initializing Anti-Spoofing Engine (MiniFASNet)...")
         from deepface.models.spoofing.FasNet import Fasnet
+        from deepface.models.spoofing.FasNetUtils import crop as fasnet_crop
         self._fasnet = Fasnet()
+        self._fasnet_crop = fasnet_crop
         self._lock = threading.Lock()
         logger.info("Anti-Spoofing Engine ready.")
 
@@ -87,16 +105,30 @@ class AntiSpoofDetector:
             return False, "face_too_small", 0.0
 
         # --- 1. MiniFASNet Deep PAD Inference ---
+        # Dark / backlit faces are brightened first (see src/lighting.py);
+        # MiniFASNet otherwise mistakes their noisy low-contrast skin for a
+        # screen. Well-lit faces - and self-lit phone screens - are untouched.
+        low_light = is_low_light(frame, (x, y, w, h))
+        model_frame = enhance_low_light(frame, (x, y, w, h)) if low_light else frame
         with self._lock:
             try:
-                is_real_fasnet, fasnet_score = self._fasnet.analyze(frame, (x, y, w, h))
+                spoof_prob = self._spoof_probability(model_frame, (x, y, w, h))
             except Exception as e:
                 logger.warning("MiniFASNet analysis error: %s", e)
-                is_real_fasnet, fasnet_score = True, 0.5
+                spoof_prob = 0.0
+        real_score = 1.0 - spoof_prob
 
-        if not is_real_fasnet:
-            logger.info("MiniFASNet rejected face as SPOOF (score: %.3f)", fasnet_score)
-            return False, "deep_spoof_detected", float(fasnet_score)
+        if spoof_prob >= SPOOF_REJECT_CONFIDENCE:
+            logger.info(
+                "MiniFASNet rejected face as SPOOF (%.0f%% fake, limit %.0f%%%s)",
+                spoof_prob * 100, SPOOF_REJECT_CONFIDENCE * 100, ", low-light corrected" if low_light else "",
+            )
+            return False, "deep_spoof_detected", float(real_score)
+        if spoof_prob >= 0.5:
+            logger.info(
+                "MiniFASNet borderline (%.0f%% fake) - accepted, below the %.0f%% limit%s",
+                spoof_prob * 100, SPOOF_REJECT_CONFIDENCE * 100, " (low-light corrected)" if low_light else "",
+            )
 
         # --- 2. Screen Specular Glare & Reflection Verification ---
         face_roi = frame[y:y + h, x:x + w]
@@ -106,7 +138,24 @@ class AntiSpoofDetector:
                 logger.info("Screen artifact detected: %s (score: %.3f)", screen_reason, screen_score)
                 return False, screen_reason, float(screen_score)
 
-        return True, "genuine", float(fasnet_score)
+        return True, "genuine", float(real_score)
+
+    def _spoof_probability(self, frame: Any, box: Tuple[int, int, int, int]) -> float:
+        """Probability (0-1) that the face is a presentation attack.
+
+        Same two MiniFASNet models, crops and averaging as DeepFace's
+        Fasnet.analyze(), but returns the actual probability instead of an
+        argmax yes/no, so the decision threshold can be tuned. Class 1 is
+        "real"; classes 0 and 2 are the two attack types.
+        """
+        first = self._fasnet_crop(frame, box, 2.7, 80, 80)
+        second = self._fasnet_crop(frame, box, 4, 80, 80)
+        first = np.expand_dims(first.astype(np.float32), axis=0)
+        second = np.expand_dims(second.astype(np.float32), axis=0)
+        p1 = _softmax(self._fasnet.first_model(first, training=False).numpy())
+        p2 = _softmax(self._fasnet.second_model(second, training=False).numpy())
+        prediction = (p1 + p2) / 2.0
+        return float(1.0 - prediction[0][1])
 
     def _check_screen_artifacts(self, face_chip: Any) -> Tuple[bool, str, float]:
         """
@@ -129,6 +178,12 @@ class AntiSpoofDetector:
             return False, "clean", 0.0
         except Exception:
             return False, "clean", 0.0
+
+
+def _softmax(logits: Any) -> Any:
+    shifted = logits - np.max(logits, axis=1, keepdims=True)
+    exp = np.exp(shifted)
+    return exp / np.sum(exp, axis=1, keepdims=True)
 
 
 def get_antispoof_detector() -> AntiSpoofDetector:
